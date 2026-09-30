@@ -403,6 +403,9 @@ truth:
   type: grid
   url: https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.{{ yyyymmdd }}/conus/hrrr.t{{ hh }}z.wrfprsf{{ "%02d" % fh }}.grib2
 variables:
+  APCP:
+    level_type: surface
+    name: accum_tp
   HGT:
     level_type: isobaricInhPa
     levels: *levels
@@ -430,7 +433,9 @@ It will be verified against `HRRR` analysis as truth, which can be found in GRIB
 
 Variable grids extracted from truth datasets will be written to `/path/to/workdir/truth`, forecast dataset to `/path/to/workdir/forecast`, and run output to `/path/to/workdir/run`. The [Jinja2](https://jinja.palletsprojects.com/en/stable/) expressions inside `{{ }}` markers will be processed by [`uwtools`](https://uwtools.readthedocs.io/en/stable/) and may use any features it supports.
 
-Three variables -- geopotential height, composite reflectivity, and 2-meter temperature, will be verified. The keys under `variables` map the names of the variables as they appear in the forecast dataset to a canonical description of the variable using ECMWF variable names and level-type descriptions (see the notes in the _Configuration_ section for links). (Note that some variables do not support a "level" concept.) The full verification task-graph will comprise: cycles x leadtimes x variables x levels.
+Four variables -- accumulated total precipitation, geopotential height, composite reflectivity, and 2-meter temperature, will be verified. The keys under `variables` map the names of the variables as they appear in the forecast dataset to a canonical description of the variable using ECMWF variable names and level-type descriptions (see the notes in the _Configuration_ section for links). (Note that some variables do not support a "level" concept.) The full verification task-graph will comprise: cycles x leadtimes x variables x levels.
+
+Accumulated total precipitation is verified against six-hour accumulated truth using FSS at neighborhood widths 3, 5, and 11, plus CSI and HSS, for thresholds of 1, 5, 10, and 25 mm.
 
 Finally, because `baseline.name` is set to `truth`, `HRRR` forecasts with validtimes matching those of the `ML` model's forecasts will be verified against `HRRR` analysis, producing MET statistics. If the `plots` task is requested, the `ML` and `HRRR` stats will be plotted together.
 

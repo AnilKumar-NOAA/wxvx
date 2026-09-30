@@ -6,7 +6,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from functools import cache
 from itertools import chain, pairwise, product
@@ -32,7 +32,7 @@ from iotaa import Asset, Node, collection, external, task
 from wxvx import variables
 from wxvx.metconf import render as render_metconf
 from wxvx.net import fetch
-from wxvx.strings import MET, S
+from wxvx.strings import EC, MET, S
 from wxvx.times import TimeCoords, gen_timecoords, gen_timecoords_truth, hh, hms, tcinfo, yyyymmdd
 from wxvx.util import (
     LINETYPE,
@@ -52,7 +52,6 @@ from wxvx.variables import VARMETA, Var, da_construct, da_select, ds_construct, 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
-    from datetime import timedelta
 
     from wxvx.config import Config
     from wxvx.variables import VarMeta
@@ -119,7 +118,7 @@ def grids_truth(c: Config):
     yield "Truth grids for %s" % c.truth.name
     if c.truth.type is TruthType.GRID:
         reqs = [
-            _grid_grib(c, TimeCoords(cycle=tc.validtime, leadtime=0), var, Source.TRUTH)
+            _grid_grib(c, _truth_timecoords(tc, var), var, Source.TRUTH)
             for var, _, tc in _vars_varnames_times(c)
         ]
     else:
@@ -429,6 +428,10 @@ def _grib_index_data_wgrib2(c: Config, outdir: Path, tc: TimeCoords, url: str):
             firstbyte=int(this_record[1]),
             lastbyte=int(next_record[1]) - 1,
         )
+        if truth_var.name == EC.accum_tp and not _matches_accumulation_period(
+            this_record, tc.leadtime
+        ):
+            continue
         if truth_var in vxvars:
             idxdata[str(truth_var)] = truth_var
 
@@ -580,7 +583,7 @@ def _plot(
             "%s %s %s%s vs %s at %s" % (desc, stat, w, c.forecast.name, c.truth.name, cyclestr)
         )
         plt.xlabel("Leadtime")
-        plt.ylabel(f"{stat} ({varmeta.units})")
+        plt.ylabel(_stat_ylabel(varmeta, stat))
         plt.xticks(ticks=int_leadtimes, labels=["%03d" % x for x in int_leadtimes], rotation=90)
         plt.legend(title="Model", bbox_to_anchor=(1.02, 1), loc="upper left")
         plt.figtext(0.403, 0.0, f"wxvx {version()}", fontsize=6)
@@ -619,7 +622,7 @@ def _stats_vs_grid(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: st
     else:
         fcst = _grid_grib(c, tc, var, source)
         datafmt = DataFormat.GRIB
-    obs = _grid_grib(c, TimeCoords(cycle=tc.validtime, leadtime=0), var, Source.TRUTH)
+    obs = _grid_grib(c, _truth_timecoords(tc, var), var, Source.TRUTH)
     reqs = [fcst, obs]
     path_config = path.with_suffix(".config")
     polyfile = _maybe_polyfile(c, reqs, path)
@@ -688,6 +691,26 @@ def _timegate(timegate: bool, validtime: datetime):
     taskname = "Validtime %s reached%s" % (validtime, qualifier)
     yield taskname
     yield Asset(None, lambda: reached or not timegate)
+
+
+def _truth_timecoords(tc: TimeCoords, var: Var) -> TimeCoords:
+    leadtime = timedelta(hours=VARMETA[var.name].truth_leadtime)
+    return TimeCoords(cycle=tc.validtime - leadtime, leadtime=leadtime)
+
+
+def _stat_ylabel(meta: VarMeta, stat: str) -> str:
+    return f"{stat} ({meta.units})" if LINETYPE[stat] == MET.cnt else stat
+
+
+def _matches_accumulation_period(record: Sequence[str], leadtime: timedelta) -> bool:
+    if len(record) < 6:
+        return False
+    match = re.fullmatch(r"(\d+)-(\d+) (hour|day) acc fcst", record[5])
+    if not match:
+        return False
+    start, end = (int(match.group(i)) for i in (1, 2))
+    scale = 24 if match.group(3) == "day" else 1
+    return start == 0 and end * scale == int(leadtime.total_seconds() / 3600)
 
 
 # Support
