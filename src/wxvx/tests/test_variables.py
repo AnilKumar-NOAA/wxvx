@@ -36,7 +36,7 @@ def test_variables_VarMeta():
         cnt_thresh=[">15"],
         description="Composite Reflectivity",
         level_type=S.atmosphere,
-        met_stats=[MET.FSS, MET.PODY],
+        met_stats=[MET.FSS, MET.CSI, MET.HSS, MET.PODY],
         name=EC.refc,
         nbrhd_shape=MET.CIRCLE,
         nbrhd_width=[3, 5, 11],
@@ -55,6 +55,11 @@ def test_variables_VarMeta():
         (MET.nbrhd_shape, "TRIANGLE"),
     ]:
         fails(k, v)
+
+
+def test_variables_VarMeta__accum_tp():
+    meta = variables.VARMETA[EC.accum_tp]
+    assert meta.truth_leadtime == 6
 
 
 @mark.parametrize(S.level_type, [S.atmosphere, S.meanSea, S.surface])
@@ -101,7 +106,13 @@ def test_variables_HRRR():
 
 
 @mark.parametrize(
-    (S.name, "expected"), [(EC.t, NOAA.TMP), (EC.t2, NOAA.TMP), ("foo", variables.UNKNOWN)]
+    (S.name, "expected"),
+    [
+        (EC.accum_tp, NOAA.APCP),
+        (EC.t, NOAA.TMP),
+        (EC.t2, NOAA.TMP),
+        ("foo", variables.UNKNOWN),
+    ],
 )
 def test_variables_HRRR_varname(name, expected):
     assert variables.HRRR.varname(name=name) == expected
@@ -110,6 +121,7 @@ def test_variables_HRRR_varname(name, expected):
 @mark.parametrize(
     (S.name, S.level_type, "expected"),
     [
+        (NOAA.APCP, S.surface, EC.accum_tp),
         (NOAA.TMP, S.isobaricInhPa, EC.t),
         (NOAA.TMP, S.heightAboveGround, EC.t2),
         ("FOO", "suface", variables.UNKNOWN),
