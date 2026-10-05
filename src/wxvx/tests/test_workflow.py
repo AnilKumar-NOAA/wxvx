@@ -641,6 +641,12 @@ def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tidy):
     assert var.lastbyte == 199
 
 
+def test_workflow__matches_accumulation_period__invalid_record():
+    leadtime = timedelta(hours=6)
+    assert not workflow._matches_accumulation_period([], leadtime)
+    assert not workflow._matches_accumulation_period([""] * 6, leadtime)
+
+
 def test_workflow__grib_index_file_eccodes(c, fakefs, logged, tc):
     grib = fakefs / "foo"
     grib.touch()
