@@ -1227,16 +1227,16 @@ def test_workflow__regrid_width(c):
 
 
 @mark.parametrize(
-    ("name", "expected_cycle", "expected_leadtime"),
+    ("name", "expected_leadtime"),
     [
-        (EC.t2, "2024-12-20T00:00:00", timedelta(0)),
-        (EC.accum_tp, "2024-12-19T18:00:00", timedelta(hours=6)),
+        (EC.t2, timedelta(0)),
+        (EC.accum_tp, timedelta(hours=6)),
     ],
 )
-def test_workflow__truth_timecoords(name, expected_cycle, expected_leadtime):
-    tc = TimeCoords(datetime(2024, 12, 19, 18, tzinfo=timezone.utc), timedelta(hours=6))
+def test_workflow__truth_timecoords(name, expected_leadtime, tc):
+    tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
     result = workflow._truth_timecoords(tc, Var(name=name, level_type=S.surface))
-    assert result.cycle.isoformat() == expected_cycle
+    assert result.cycle == tc.validtime - expected_leadtime
     assert result.leadtime == expected_leadtime
     assert result.validtime == tc.validtime
 
