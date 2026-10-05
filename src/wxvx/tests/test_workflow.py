@@ -614,17 +614,18 @@ def test_workflow__grib_index_data_wgrib2(c, tc, tidy):
     }
 
 
-def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tidy):
-    gribidx = """
-    1:100:d=2022020312:APCP:surface:0-6 hour acc fcst:
-    2:200:d=2022020312:APCP:surface:5-6 hour acc fcst:
-    3:300:d=2022020312:TMP:surface:6 hour fcst:
+def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tc, tidy):
+    tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
+    cycle = tc.cycle.strftime("%Y%m%d%H")
+    gribidx = f"""
+    1:100:d={cycle}:APCP:surface:0-6 hour acc fcst:
+    2:200:d={cycle}:APCP:surface:5-6 hour acc fcst:
+    3:300:d={cycle}:TMP:surface:6 hour fcst:
     """
     idxfile = c.paths.grids_truth / "hrrr.idx"
     idxfile.write_text(tidy(gribidx))
     c.truth = replace(c.truth, name=S.HRRR)
     c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.accum_tp}}
-    tc = TimeCoords(datetime(2022, 2, 3, 12, tzinfo=timezone.utc), timedelta(hours=6))
 
     @external
     def mock(*_args, **_kwargs):
