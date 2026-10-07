@@ -53,6 +53,34 @@ TESTDATA = {
         MET.PODY,
         None,
     ),
+    "csi": (
+        NOAA.APCP,
+        None,
+        [
+            pd.DataFrame(
+                {MET.MODEL: "foo", MET.FCST_LEAD: [60000], MET.CSI: [0.5], MET.FCST_THRESH: ">=5"}
+            ),
+            pd.DataFrame(
+                {MET.MODEL: "bar", MET.FCST_LEAD: [60000], MET.CSI: [0.4], MET.FCST_THRESH: ">=10"}
+            ),
+        ],
+        MET.CSI,
+        None,
+    ),
+    "hss": (
+        NOAA.APCP,
+        None,
+        [
+            pd.DataFrame(
+                {MET.MODEL: "foo", MET.FCST_LEAD: [60000], MET.HSS: [0.6], MET.FCST_THRESH: ">=5"}
+            ),
+            pd.DataFrame(
+                {MET.MODEL: "bar", MET.FCST_LEAD: [60000], MET.HSS: [0.3], MET.FCST_THRESH: ">=10"}
+            ),
+        ],
+        MET.HSS,
+        None,
+    ),
     "baz": (
         NOAA.REFC,
         None,
@@ -586,6 +614,40 @@ def test_workflow__grib_index_data_wgrib2(c, tc, tidy):
     }
 
 
+def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tc, tidy):
+    tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
+    cycle = tc.cycle.strftime("%Y%m%d%H")
+    gribidx = f"""
+    1:100:d={cycle}:APCP:surface:0-6 hour acc fcst:
+    2:200:d={cycle}:APCP:surface:5-6 hour acc fcst:
+    3:300:d={cycle}:TMP:surface:6 hour fcst:
+    """
+    idxfile = c.paths.grids_truth / "hrrr.idx"
+    idxfile.write_text(tidy(gribidx))
+    c.truth = replace(c.truth, name=S.HRRR)
+    c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.accum_tp}}
+
+    @external
+    def mock(*_args, **_kwargs):
+        yield "mock"
+        yield Asset(idxfile, idxfile.exists)
+
+    with patch.object(workflow, "_local_file_from_http", mock):
+        node = workflow._grib_index_data_wgrib2(
+            c=c, outdir=c.paths.grids_truth, tc=tc, url=c.truth.url
+        )
+    assert set(node.ref) == {"accum_tp-surface"}
+    var = node.ref["accum_tp-surface"]
+    assert var.firstbyte == 100
+    assert var.lastbyte == 199
+
+
+def test_workflow__matches_accumulation_period__invalid_record():
+    leadtime = timedelta(hours=6)
+    assert not workflow._matches_accumulation_period([], leadtime)
+    assert not workflow._matches_accumulation_period([""] * 6, leadtime)
+
+
 def test_workflow__grib_index_file_eccodes(c, fakefs, logged, tc):
     grib = fakefs / "foo"
     grib.touch()
@@ -1017,6 +1079,20 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
     assert logged("Released index %s" % iid)
 
 
+def test_workflow__grid_grib_from_local__precipitation(fakefs):
+    with patch.object(workflow, "ec") as ec:
+        ec.codes_new_from_index.return_value = None
+        workflow._grid_grib_from_local(
+            path=fakefs / "a.grib2",
+            idxfile=fakefs / "a.ecidx",
+            var=Var(name=EC.accum_tp, level_type=S.surface),
+            taskname="foo",
+        )
+    ec.codes_index_select_string.assert_any_call(ANY, "shortName", "tp")
+    ec.codes_index_select_long.assert_any_call(ANY, "startStep", 0)
+    ec.codes_index_select_long.assert_any_call(ANY, "endStep", 6)
+
+
 def test_workflow__grid_grib_from_remote(testvars):
     idxdata = {
         "gh-isobaricInhPa-0900": variables.HRRR(
@@ -1119,7 +1195,7 @@ def test_workflow__met_mask__no_polyfile():
     assert workflow._met_mask(polyfile=polyfile) == expected
 
 
-@mark.parametrize("dictkey", ["foo", "bar", "baz"])
+@mark.parametrize("dictkey", ["foo", "bar", "csi", "hss", "baz"])
 def test_workflow__prepare_plot_data(dictkey):
     _, _, dfs, stat, width = TESTDATA[dictkey]
     linetype = LINETYPE[stat]
@@ -1131,7 +1207,7 @@ def test_workflow__prepare_plot_data(dictkey):
     assert stat in tdf.columns
     assert MET.FCST_LEAD in tdf.columns
     assert all(tdf[MET.FCST_LEAD] == 6)
-    if stat == MET.PODY:
+    if stat in [MET.CSI, MET.HSS, MET.PODY]:
         assert MET.FCST_THRESH in tdf.columns
         assert MET.LABEL in tdf.columns
     if stat == MET.FSS:
@@ -1162,6 +1238,38 @@ def test_workflow__regrid_width(c):
     with raises(WXVXError) as e:
         workflow._regrid_width(c=c)
     assert str(e.value) == "Could not determine 'width' value for regrid method 'FOO'"
+
+
+@mark.parametrize(
+    ("truth_name", "name", "expected_leadtime"),
+    [
+        (S.GFS, EC.t2, timedelta(0)),
+        (S.GFS, EC.accum_tp, timedelta(hours=6)),
+        (S.HRRR, EC.accum_tp, timedelta(hours=6)),
+        (S.STAGEIV, EC.accum_tp, timedelta(0)),
+    ],
+)
+def test_workflow__truth_timecoords(c, truth_name, name, expected_leadtime, tc):
+    c.truth = replace(c.truth, name=truth_name)
+    tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
+    result = workflow._truth_timecoords(c, tc, Var(name=name, level_type=S.surface))
+    assert result.cycle == tc.validtime - expected_leadtime
+    assert result.leadtime == expected_leadtime
+    assert result.validtime == tc.validtime
+
+
+@mark.parametrize(
+    ("stat", "expected"),
+    [
+        (MET.CSI, "CSI"),
+        (MET.FSS, "FSS"),
+        (MET.HSS, "HSS"),
+        (MET.ME, "ME (m)"),
+        (MET.RMSE, "RMSE (m)"),
+    ],
+)
+def test_workflow__stat_ylabel(stat, expected):
+    assert workflow._stat_ylabel(variables.VARMETA[EC.gh], stat) == expected
 
 
 def test_workflow__stat_args(c, statkit, utc):
@@ -1238,6 +1346,14 @@ def test_workflow__stats_widths(c):
         (MET.FSS, 5),
         (MET.FSS, 11),
         (MET.PODY, None),
+    ]
+    c.variables[NOAA.APCP] = {S.level_type: S.surface, S.name: EC.accum_tp}
+    assert list(workflow._stats_widths(c=c, varname=NOAA.APCP)) == [
+        (MET.FSS, 3),
+        (MET.FSS, 5),
+        (MET.FSS, 11),
+        (MET.CSI, None),
+        (MET.HSS, None),
     ]
     assert list(workflow._stats_widths(c=c, varname=NOAA.SPFH)) == [
         (MET.ME, None),

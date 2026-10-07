@@ -277,19 +277,34 @@ The truth dataset to verify forecast (and, optionally, the baseline) data, again
 
 ### truth.name
 
-Name of the truth to verify against. Currently supported values are: `GFS`, `HRRR`, `PREPBUFR`. This value guides `wxvx` in identification of truth data (grids or obs) corresponding to the forecast variable being verified. This name will also appear in MET stat output. This name must differ from `forecast.name`.
+Name of the truth to verify against. Currently supported values are: `GDAS`, `GFS`, `HRRR`, `STAGEIV`, `PREPBUFR`. This value guides `wxvx` in identification of truth data (grids or obs) corresponding to the forecast variable being verified. This name will also appear in MET stat output. This name must differ from `forecast.name`.
 
 ### truth.type
 
 One of `grid` or `point`.
 
-* For `grid`, `url` should point to GRIB data. Supported `name` are: `GDAS`, `GFS`, `HRRR`.
+* For `grid`, `url` should point to GRIB data. Supported `name` values are: `GDAS`, `GFS`, `HRRR`, `STAGEIV`.
 
 * For `point`, `url` should point to PREPBUFR data, `name` should be `PREPBUFR`, and `regrid.to` must not be `truth`.
 
 ### truth.url
 
 Specifies the location of truth data. Values may be local-filesystem paths (optionally prefixed with `file://`) or HTTP URLs prefixed with `http://` or `https://` and may contain Jinja2 [expressions](#expressions).
+
+For Stage IV precipitation verification, stage a native six-hour CONUS GRIB2 file before
+running `wxvx` and configure it as local truth. The file timestamp is interpreted as the ending
+valid time of the accumulation; forecast cycles and leadtimes remain controlled by the caller.
+
+``` yaml
+truth:
+  name: STAGEIV
+  type: grid
+  url: "{{ meta.stageiv }}/st4_conus.{{ yyyymmdd }}{{ hh }}.06h.grb2"
+variables:
+  APCP:
+    level_type: surface
+    name: accum_tp
+```
 
 ### variables
 
@@ -403,6 +418,9 @@ truth:
   type: grid
   url: https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.{{ yyyymmdd }}/conus/hrrr.t{{ hh }}z.wrfprsf{{ "%02d" % fh }}.grib2
 variables:
+  APCP:
+    level_type: surface
+    name: accum_tp
   HGT:
     level_type: isobaricInhPa
     levels: *levels
@@ -430,7 +448,9 @@ It will be verified against `HRRR` analysis as truth, which can be found in GRIB
 
 Variable grids extracted from truth datasets will be written to `/path/to/workdir/truth`, forecast dataset to `/path/to/workdir/forecast`, and run output to `/path/to/workdir/run`. The [Jinja2](https://jinja.palletsprojects.com/en/stable/) expressions inside `{{ }}` markers will be processed by [`uwtools`](https://uwtools.readthedocs.io/en/stable/) and may use any features it supports.
 
-Three variables -- geopotential height, composite reflectivity, and 2-meter temperature, will be verified. The keys under `variables` map the names of the variables as they appear in the forecast dataset to a canonical description of the variable using ECMWF variable names and level-type descriptions (see the notes in the _Configuration_ section for links). (Note that some variables do not support a "level" concept.) The full verification task-graph will comprise: cycles x leadtimes x variables x levels.
+Four variables -- accumulated total precipitation, geopotential height, composite reflectivity, and 2-meter temperature, will be verified. The keys under `variables` map the names of the variables as they appear in the forecast dataset to a canonical description of the variable using ECMWF variable names and level-type descriptions (see the notes in the _Configuration_ section for links). (Note that some variables do not support a "level" concept.) The full verification task-graph will comprise: cycles x leadtimes x variables x levels.
+
+Accumulated total precipitation is verified against six-hour accumulated truth using FSS at neighborhood widths 3, 5, and 11, plus CSI and HSS, for thresholds of 1, 5, 10, and 25 mm.
 
 Finally, because `baseline.name` is set to `truth`, `HRRR` forecasts with validtimes matching those of the `ML` model's forecasts will be verified against `HRRR` analysis, producing MET statistics. If the `plots` task is requested, the `ML` and `HRRR` stats will be plotted together.
 

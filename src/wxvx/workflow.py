@@ -6,7 +6,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from functools import cache
 from itertools import chain, pairwise, product
@@ -32,7 +32,7 @@ from iotaa import Asset, Node, collection, external, task
 from wxvx import variables
 from wxvx.metconf import render as render_metconf
 from wxvx.net import fetch
-from wxvx.strings import MET, S
+from wxvx.strings import EC, MET, S
 from wxvx.times import TimeCoords, gen_timecoords, gen_timecoords_truth, hh, hms, tcinfo, yyyymmdd
 from wxvx.util import (
     LINETYPE,
@@ -52,7 +52,6 @@ from wxvx.variables import VARMETA, Var, da_construct, da_select, ds_construct, 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
-    from datetime import timedelta
 
     from wxvx.config import Config
     from wxvx.variables import VarMeta
@@ -119,7 +118,7 @@ def grids_truth(c: Config):
     yield "Truth grids for %s" % c.truth.name
     if c.truth.type is TruthType.GRID:
         reqs = [
-            _grid_grib(c, TimeCoords(cycle=tc.validtime, leadtime=0), var, Source.TRUTH)
+            _grid_grib(c, _truth_timecoords(c, tc, var), var, Source.TRUTH)
             for var, _, tc in _vars_varnames_times(c)
         ]
     else:
@@ -429,6 +428,10 @@ def _grib_index_data_wgrib2(c: Config, outdir: Path, tc: TimeCoords, url: str):
             firstbyte=int(this_record[1]),
             lastbyte=int(next_record[1]) - 1,
         )
+        if truth_var.name == EC.accum_tp and not _matches_accumulation_period(
+            this_record, timedelta(hours=VARMETA[truth_var.name].truth_leadtime)
+        ):
+            continue
         if truth_var in vxvars:
             idxdata[str(truth_var)] = truth_var
 
@@ -448,7 +451,13 @@ def _grib_index_file_eccodes(c: Config, grib_path: Path, tc: TimeCoords, source:
     yield Asset(path, path.is_file)
     yield [_timegate(c.timegate, tc.validtime), _existing(grib_path)]
     # Keep index creation here in-sync with index selection in _grid_grib_from_local.
-    keys = [f"{S.shortName}:s", f"{S.typeOfLevel}:s", f"{S.level}:l"]
+    keys = [
+        f"{S.shortName}:s",
+        f"{S.typeOfLevel}:s",
+        f"{S.level}:l",
+        "startStep:l",
+        "endStep:l",
+    ]
     with _EC_LOCK:
         iid = ec.codes_index_new_from_file(str(grib_path), keys)
         logging.debug("%s: Opened %s as %s", taskname, grib_path, iid)
@@ -580,7 +589,7 @@ def _plot(
             "%s %s %s%s vs %s at %s" % (desc, stat, w, c.forecast.name, c.truth.name, cyclestr)
         )
         plt.xlabel("Leadtime")
-        plt.ylabel(f"{stat} ({varmeta.units})")
+        plt.ylabel(_stat_ylabel(varmeta, stat))
         plt.xticks(ticks=int_leadtimes, labels=["%03d" % x for x in int_leadtimes], rotation=90)
         plt.legend(title="Model", bbox_to_anchor=(1.02, 1), loc="upper left")
         plt.figtext(0.403, 0.0, f"wxvx {version()}", fontsize=6)
@@ -619,7 +628,7 @@ def _stats_vs_grid(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: st
     else:
         fcst = _grid_grib(c, tc, var, source)
         datafmt = DataFormat.GRIB
-    obs = _grid_grib(c, TimeCoords(cycle=tc.validtime, leadtime=0), var, Source.TRUTH)
+    obs = _grid_grib(c, _truth_timecoords(c, tc, var), var, Source.TRUTH)
     reqs = [fcst, obs]
     path_config = path.with_suffix(".config")
     polyfile = _maybe_polyfile(c, reqs, path)
@@ -688,6 +697,27 @@ def _timegate(timegate: bool, validtime: datetime):
     taskname = "Validtime %s reached%s" % (validtime, qualifier)
     yield taskname
     yield Asset(None, lambda: reached or not timegate)
+
+
+def _truth_timecoords(c: Config, tc: TimeCoords, var: Var) -> TimeCoords:
+    hours = 0 if c.truth.name == S.STAGEIV else VARMETA[var.name].truth_leadtime
+    leadtime = timedelta(hours=hours)
+    return TimeCoords(cycle=tc.validtime - leadtime, leadtime=leadtime)
+
+
+def _stat_ylabel(meta: VarMeta, stat: str) -> str:
+    return f"{stat} ({meta.units})" if LINETYPE[stat] == MET.cnt else stat
+
+
+def _matches_accumulation_period(record: Sequence[str], leadtime: timedelta) -> bool:
+    if len(record) < 6:
+        return False
+    match = re.fullmatch(r"(\d+)-(\d+) (hour|day) acc fcst", record[5])
+    if not match:
+        return False
+    start, end = (int(match.group(i)) for i in (1, 2))
+    scale = 24 if match.group(3) == "day" else 1
+    return start == 0 and end * scale == int(leadtime.total_seconds() / 3600)
 
 
 # Support
@@ -771,9 +801,12 @@ def _grid_grib_from_local(path: Path, idxfile: Path, var: Var, taskname: str) ->
     with _EC_LOCK:
         iid = ec.codes_index_read(str(idxfile))
         # Keep index selection here in-sync with index creation in _grib_index_file_eccodes.
-        ec.codes_index_select_string(iid, "shortName", var.name)
+        ec.codes_index_select_string(iid, "shortName", variables.grib_shortname(var.name))
         ec.codes_index_select_string(iid, "typeOfLevel", var.level_type)
         ec.codes_index_select_long(iid, "level", int(var.level) if var.level else 0)
+        if var.name == EC.accum_tp:
+            ec.codes_index_select_long(iid, "startStep", 0)
+            ec.codes_index_select_long(iid, "endStep", VARMETA[var.name].truth_leadtime)
         gids = []
         while gid := ec.codes_new_from_index(iid):
             gids.append(gid)
