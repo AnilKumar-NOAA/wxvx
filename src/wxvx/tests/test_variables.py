@@ -132,6 +132,26 @@ def test_variables_HRRR__canonicalize(name, level_type, expected):
 
 
 @mark.parametrize(
+    (S.name, "expected"),
+    [(EC.accum_tp, NOAA.APCP), (EC.t2, variables.UNKNOWN)],
+)
+def test_variables_STAGEIV_varname(name, expected):
+    assert variables.STAGEIV.varname(name=name) == expected
+
+
+@mark.parametrize(
+    (S.name, S.level_type, "expected"),
+    [
+        (NOAA.APCP, S.surface, EC.accum_tp),
+        (NOAA.APCP, S.isobaricInhPa, variables.UNKNOWN),
+        (NOAA.TMP, S.surface, variables.UNKNOWN),
+    ],
+)
+def test_variables_STAGEIV__canonicalize(name, level_type, expected):
+    assert variables.STAGEIV._canonicalize(name=name, level_type=level_type) == expected
+
+
+@mark.parametrize(
     ("expected", "levstr"),
     [
         ((S.atmosphere, None), "entire atmosphere"),
@@ -272,7 +292,13 @@ def test_variables_metlevel__error():
 
 
 @mark.parametrize(
-    ("name", "obj"), [(S.GFS, variables.GFS), (S.HRRR, variables.HRRR), ("FOO", None)]
+    ("name", "obj"),
+    [
+        (S.GFS, variables.GFS),
+        (S.HRRR, variables.HRRR),
+        (S.STAGEIV, variables.STAGEIV),
+        ("FOO", None),
+    ],
 )
 def test_variables_model_class(name, obj):
     if obj is None:
@@ -280,6 +306,14 @@ def test_variables_model_class(name, obj):
             variables.model_class(name)
     else:
         assert variables.model_class(name) == obj
+
+
+@mark.parametrize(
+    (S.name, "expected"),
+    [(EC.accum_tp, "tp"), (EC.t2, EC.t2)],
+)
+def test_variables_grib_shortname(name, expected):
+    assert variables.grib_shortname(name) == expected
 
 
 def test_variables_model_names():
@@ -292,7 +326,7 @@ def test_variables_model_names():
     class C2(B): ...
 
     assert variables.model_names(A) == {"B", "C1", "C2"}
-    assert variables.model_names() == {S.GDAS, S.GFS, S.HRRR, S.PREPBUFR}
+    assert variables.model_names() == {S.GDAS, S.GFS, S.HRRR, S.PREPBUFR, S.STAGEIV}
 
 
 def test_variables__da_val__fail_unparesable(da_flat):

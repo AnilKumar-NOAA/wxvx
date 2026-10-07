@@ -118,7 +118,7 @@ def grids_truth(c: Config):
     yield "Truth grids for %s" % c.truth.name
     if c.truth.type is TruthType.GRID:
         reqs = [
-            _grid_grib(c, _truth_timecoords(tc, var), var, Source.TRUTH)
+            _grid_grib(c, _truth_timecoords(c, tc, var), var, Source.TRUTH)
             for var, _, tc in _vars_varnames_times(c)
         ]
     else:
@@ -429,7 +429,7 @@ def _grib_index_data_wgrib2(c: Config, outdir: Path, tc: TimeCoords, url: str):
             lastbyte=int(next_record[1]) - 1,
         )
         if truth_var.name == EC.accum_tp and not _matches_accumulation_period(
-            this_record, tc.leadtime
+            this_record, timedelta(hours=VARMETA[truth_var.name].truth_leadtime)
         ):
             continue
         if truth_var in vxvars:
@@ -451,7 +451,13 @@ def _grib_index_file_eccodes(c: Config, grib_path: Path, tc: TimeCoords, source:
     yield Asset(path, path.is_file)
     yield [_timegate(c.timegate, tc.validtime), _existing(grib_path)]
     # Keep index creation here in-sync with index selection in _grid_grib_from_local.
-    keys = [f"{S.shortName}:s", f"{S.typeOfLevel}:s", f"{S.level}:l"]
+    keys = [
+        f"{S.shortName}:s",
+        f"{S.typeOfLevel}:s",
+        f"{S.level}:l",
+        "startStep:l",
+        "endStep:l",
+    ]
     with _EC_LOCK:
         iid = ec.codes_index_new_from_file(str(grib_path), keys)
         logging.debug("%s: Opened %s as %s", taskname, grib_path, iid)
@@ -622,7 +628,7 @@ def _stats_vs_grid(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: st
     else:
         fcst = _grid_grib(c, tc, var, source)
         datafmt = DataFormat.GRIB
-    obs = _grid_grib(c, _truth_timecoords(tc, var), var, Source.TRUTH)
+    obs = _grid_grib(c, _truth_timecoords(c, tc, var), var, Source.TRUTH)
     reqs = [fcst, obs]
     path_config = path.with_suffix(".config")
     polyfile = _maybe_polyfile(c, reqs, path)
@@ -693,8 +699,9 @@ def _timegate(timegate: bool, validtime: datetime):
     yield Asset(None, lambda: reached or not timegate)
 
 
-def _truth_timecoords(tc: TimeCoords, var: Var) -> TimeCoords:
-    leadtime = timedelta(hours=VARMETA[var.name].truth_leadtime)
+def _truth_timecoords(c: Config, tc: TimeCoords, var: Var) -> TimeCoords:
+    hours = 0 if c.truth.name == S.STAGEIV else VARMETA[var.name].truth_leadtime
+    leadtime = timedelta(hours=hours)
     return TimeCoords(cycle=tc.validtime - leadtime, leadtime=leadtime)
 
 
@@ -794,9 +801,12 @@ def _grid_grib_from_local(path: Path, idxfile: Path, var: Var, taskname: str) ->
     with _EC_LOCK:
         iid = ec.codes_index_read(str(idxfile))
         # Keep index selection here in-sync with index creation in _grib_index_file_eccodes.
-        ec.codes_index_select_string(iid, "shortName", var.name)
+        ec.codes_index_select_string(iid, "shortName", variables.grib_shortname(var.name))
         ec.codes_index_select_string(iid, "typeOfLevel", var.level_type)
         ec.codes_index_select_long(iid, "level", int(var.level) if var.level else 0)
+        if var.name == EC.accum_tp:
+            ec.codes_index_select_long(iid, "startStep", 0)
+            ec.codes_index_select_long(iid, "endStep", VARMETA[var.name].truth_leadtime)
         gids = []
         while gid := ec.codes_new_from_index(iid):
             gids.append(gid)

@@ -316,6 +316,20 @@ class HRRR(GFS):
     )
 
 
+class STAGEIV(GFS):
+    """
+    NOAA/NCEP Stage IV quantitative precipitation estimates.
+    """
+
+    @staticmethod
+    def varname(name: str) -> str:
+        return NOAA.APCP if name == EC.accum_tp else UNKNOWN
+
+    @staticmethod
+    def _canonicalize(name: str, level_type: str) -> str:
+        return EC.accum_tp if (name, level_type) == (NOAA.APCP, S.surface) else UNKNOWN
+
+
 class PREPBUFR(GFS):
     """
     Observations in PREPBUFR format, following GFS conventions.
@@ -433,6 +447,10 @@ def model_class(name: str) -> Any:
         return getattr(sys.modules[__name__], name)
     msg = f"Truth model {name}"
     raise NotImplementedError(msg)
+
+
+def grib_shortname(name: str) -> str:
+    return "tp" if name == EC.accum_tp else name
 
 
 @cache

@@ -1079,6 +1079,20 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
     assert logged("Released index %s" % iid)
 
 
+def test_workflow__grid_grib_from_local__precipitation(fakefs):
+    with patch.object(workflow, "ec") as ec:
+        ec.codes_new_from_index.return_value = None
+        workflow._grid_grib_from_local(
+            path=fakefs / "a.grib2",
+            idxfile=fakefs / "a.ecidx",
+            var=Var(name=EC.accum_tp, level_type=S.surface),
+            taskname="foo",
+        )
+    ec.codes_index_select_string.assert_any_call(ANY, "shortName", "tp")
+    ec.codes_index_select_long.assert_any_call(ANY, "startStep", 0)
+    ec.codes_index_select_long.assert_any_call(ANY, "endStep", 6)
+
+
 def test_workflow__grid_grib_from_remote(testvars):
     idxdata = {
         "gh-isobaricInhPa-0900": variables.HRRR(
@@ -1227,15 +1241,18 @@ def test_workflow__regrid_width(c):
 
 
 @mark.parametrize(
-    ("name", "expected_leadtime"),
+    ("truth_name", "name", "expected_leadtime"),
     [
-        (EC.t2, timedelta(0)),
-        (EC.accum_tp, timedelta(hours=6)),
+        (S.GFS, EC.t2, timedelta(0)),
+        (S.GFS, EC.accum_tp, timedelta(hours=6)),
+        (S.HRRR, EC.accum_tp, timedelta(hours=6)),
+        (S.STAGEIV, EC.accum_tp, timedelta(0)),
     ],
 )
-def test_workflow__truth_timecoords(name, expected_leadtime, tc):
+def test_workflow__truth_timecoords(c, truth_name, name, expected_leadtime, tc):
+    c.truth = replace(c.truth, name=truth_name)
     tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
-    result = workflow._truth_timecoords(tc, Var(name=name, level_type=S.surface))
+    result = workflow._truth_timecoords(c, tc, Var(name=name, level_type=S.surface))
     assert result.cycle == tc.validtime - expected_leadtime
     assert result.leadtime == expected_leadtime
     assert result.validtime == tc.validtime
