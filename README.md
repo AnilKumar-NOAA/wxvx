@@ -277,19 +277,34 @@ The truth dataset to verify forecast (and, optionally, the baseline) data, again
 
 ### truth.name
 
-Name of the truth to verify against. Currently supported values are: `GFS`, `HRRR`, `PREPBUFR`. This value guides `wxvx` in identification of truth data (grids or obs) corresponding to the forecast variable being verified. This name will also appear in MET stat output. This name must differ from `forecast.name`.
+Name of the truth to verify against. Currently supported values are: `GDAS`, `GFS`, `HRRR`, `STAGEIV`, `PREPBUFR`. This value guides `wxvx` in identification of truth data (grids or obs) corresponding to the forecast variable being verified. This name will also appear in MET stat output. This name must differ from `forecast.name`.
 
 ### truth.type
 
 One of `grid` or `point`.
 
-* For `grid`, `url` should point to GRIB data. Supported `name` are: `GDAS`, `GFS`, `HRRR`.
+* For `grid`, `url` should point to GRIB data. Supported `name` values are: `GDAS`, `GFS`, `HRRR`, `STAGEIV`.
 
 * For `point`, `url` should point to PREPBUFR data, `name` should be `PREPBUFR`, and `regrid.to` must not be `truth`.
 
 ### truth.url
 
 Specifies the location of truth data. Values may be local-filesystem paths (optionally prefixed with `file://`) or HTTP URLs prefixed with `http://` or `https://` and may contain Jinja2 [expressions](#expressions).
+
+For Stage IV precipitation verification, stage a native six-hour CONUS GRIB2 file before
+running `wxvx` and configure it as local truth. The file timestamp is interpreted as the ending
+valid time of the accumulation; forecast cycles and leadtimes remain controlled by the caller.
+
+``` yaml
+truth:
+  name: STAGEIV
+  type: grid
+  url: "{{ meta.stageiv }}/st4_conus.{{ yyyymmdd }}{{ hh }}.06h.grb2"
+variables:
+  APCP:
+    level_type: surface
+    name: accum_tp
+```
 
 ### variables
 
