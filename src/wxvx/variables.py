@@ -75,14 +75,14 @@ VARMETA = {
         VarMeta(
             description="Accumulated Total Precipitation",
             cat_thresh=[">=1", ">=5", ">=10", ">=25"],
-            cf_standard_name="lwe_thickness_of_precipitation_amount",
+            cf_standard_name="precipitation_amount",
             level_type=S.surface,
             met_stats=[MET.FSS, MET.CSI, MET.HSS],
-            name=EC.accum_tp,
+            name=EC.tp,
             nbrhd_shape=MET.CIRCLE,
             nbrhd_width=[3, 5, 11],
             truth_leadtime=6,
-            units="mm",
+            units="kg m-2",
         ),
         VarMeta(
             description="2m Temperature",
@@ -244,7 +244,7 @@ class GFS(Var):
     @staticmethod
     def varname(name: str) -> str:
         return {
-            EC.accum_tp: NOAA.APCP,
+            EC.tp: NOAA.APCP,
             EC.gh: NOAA.HGT,
             EC.prmsl: NOAA.PRMSL,
             EC.q: NOAA.SPFH,
@@ -262,7 +262,7 @@ class GFS(Var):
     @staticmethod
     def _canonicalize(name: str, level_type: str) -> str:
         return {
-            (NOAA.APCP, S.surface): EC.accum_tp,
+            (NOAA.APCP, S.surface): EC.tp,
             (NOAA.HGT, S.isobaricInhPa): EC.gh,
             (NOAA.PRES, S.surface): EC.sp,
             (NOAA.PRMSL, S.meanSea): EC.prmsl,
@@ -323,11 +323,11 @@ class STAGEIV(GFS):
 
     @staticmethod
     def varname(name: str) -> str:
-        return NOAA.APCP if name == EC.accum_tp else UNKNOWN
+        return NOAA.APCP if name == EC.tp else UNKNOWN
 
     @staticmethod
     def _canonicalize(name: str, level_type: str) -> str:
-        return EC.accum_tp if (name, level_type) == (NOAA.APCP, S.surface) else UNKNOWN
+        return EC.tp if (name, level_type) == (NOAA.APCP, S.surface) else UNKNOWN
 
 
 class PREPBUFR(GFS):
@@ -447,10 +447,6 @@ def model_class(name: str) -> Any:
         return getattr(sys.modules[__name__], name)
     msg = f"Truth model {name}"
     raise NotImplementedError(msg)
-
-
-def grib_shortname(name: str) -> str:
-    return "tp" if name == EC.accum_tp else name
 
 
 @cache

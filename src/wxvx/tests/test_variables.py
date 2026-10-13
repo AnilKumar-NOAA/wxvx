@@ -57,9 +57,11 @@ def test_variables_VarMeta():
         fails(k, v)
 
 
-def test_variables_VarMeta__accum_tp():
-    meta = variables.VARMETA[EC.accum_tp]
+def test_variables_VarMeta__tp():
+    meta = variables.VARMETA[EC.tp]
     assert meta.truth_leadtime == 6
+    assert meta.cf_standard_name == "precipitation_amount"
+    assert meta.units == "kg m-2"
 
 
 @mark.parametrize(S.level_type, [S.atmosphere, S.meanSea, S.surface])
@@ -108,7 +110,7 @@ def test_variables_HRRR():
 @mark.parametrize(
     (S.name, "expected"),
     [
-        (EC.accum_tp, NOAA.APCP),
+        (EC.tp, NOAA.APCP),
         (EC.t, NOAA.TMP),
         (EC.t2, NOAA.TMP),
         ("foo", variables.UNKNOWN),
@@ -121,7 +123,7 @@ def test_variables_HRRR_varname(name, expected):
 @mark.parametrize(
     (S.name, S.level_type, "expected"),
     [
-        (NOAA.APCP, S.surface, EC.accum_tp),
+        (NOAA.APCP, S.surface, EC.tp),
         (NOAA.TMP, S.isobaricInhPa, EC.t),
         (NOAA.TMP, S.heightAboveGround, EC.t2),
         ("FOO", "suface", variables.UNKNOWN),
@@ -133,7 +135,7 @@ def test_variables_HRRR__canonicalize(name, level_type, expected):
 
 @mark.parametrize(
     (S.name, "expected"),
-    [(EC.accum_tp, NOAA.APCP), (EC.t2, variables.UNKNOWN)],
+    [(EC.tp, NOAA.APCP), (EC.t2, variables.UNKNOWN)],
 )
 def test_variables_STAGEIV_varname(name, expected):
     assert variables.STAGEIV.varname(name=name) == expected
@@ -142,7 +144,7 @@ def test_variables_STAGEIV_varname(name, expected):
 @mark.parametrize(
     (S.name, S.level_type, "expected"),
     [
-        (NOAA.APCP, S.surface, EC.accum_tp),
+        (NOAA.APCP, S.surface, EC.tp),
         (NOAA.APCP, S.isobaricInhPa, variables.UNKNOWN),
         (NOAA.TMP, S.surface, variables.UNKNOWN),
     ],
@@ -306,14 +308,6 @@ def test_variables_model_class(name, obj):
             variables.model_class(name)
     else:
         assert variables.model_class(name) == obj
-
-
-@mark.parametrize(
-    (S.name, "expected"),
-    [(EC.accum_tp, "tp"), (EC.t2, EC.t2)],
-)
-def test_variables_grib_shortname(name, expected):
-    assert variables.grib_shortname(name) == expected
 
 
 def test_variables_model_names():

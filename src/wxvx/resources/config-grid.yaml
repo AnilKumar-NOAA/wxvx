@@ -51,7 +51,7 @@ truth:
 variables:
   APCP:
     level_type: surface
-    name: accum_tp
+    name: tp
   HGT:
     level_type: isobaricInhPa
     levels: *levels

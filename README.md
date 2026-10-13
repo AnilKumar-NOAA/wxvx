@@ -291,9 +291,25 @@ One of `grid` or `point`.
 
 Specifies the location of truth data. Values may be local-filesystem paths (optionally prefixed with `file://`) or HTTP URLs prefixed with `http://` or `https://` and may contain Jinja2 [expressions](#expressions).
 
-For Stage IV precipitation verification, stage a native six-hour CONUS GRIB2 file before
-running `wxvx` and configure it as local truth. The file timestamp is interpreted as the ending
-valid time of the accumulation; forecast cycles and leadtimes remain controlled by the caller.
+NCEP distributes Stage IV CONUS precipitation in GRIB2 format through
+[NOMADS](https://nomads.ncep.noaa.gov/pub/data/nccf/com/pcpanl/prod/). Native six-hour files
+are available for accumulation periods ending at 00Z, 06Z, 12Z, and 18Z and can be fetched
+directly by `wxvx`:
+
+``` yaml
+truth:
+  name: STAGEIV
+  type: grid
+  url: https://nomads.ncep.noaa.gov/pub/data/nccf/com/pcpanl/prod/pcpanl.{{ yyyymmdd }}/st4_conus.{{ yyyymmdd }}{{ hh }}.06h.grb2
+variables:
+  APCP:
+    level_type: surface
+    name: tp
+```
+
+For other ending times, stage a six-hour file produced by summing the corresponding six hourly
+Stage IV fields before running `wxvx`. For example, the 09Z demo truth was produced from the
+hourly fields ending at 04Z through 09Z and configured as follows:
 
 ``` yaml
 truth:
@@ -303,8 +319,13 @@ truth:
 variables:
   APCP:
     level_type: surface
-    name: accum_tp
+    name: tp
 ```
+
+In both cases, the file timestamp is interpreted as the ending valid time of the accumulation;
+forecast cycles and leadtimes remain controlled by the caller. NOMADS retains a limited window
+of production data, so older verification periods require data from an archive or files already
+staged locally.
 
 ### variables
 
@@ -420,7 +441,7 @@ truth:
 variables:
   APCP:
     level_type: surface
-    name: accum_tp
+    name: tp
   HGT:
     level_type: isobaricInhPa
     levels: *levels
@@ -450,7 +471,11 @@ Variable grids extracted from truth datasets will be written to `/path/to/workdi
 
 Four variables -- accumulated total precipitation, geopotential height, composite reflectivity, and 2-meter temperature, will be verified. The keys under `variables` map the names of the variables as they appear in the forecast dataset to a canonical description of the variable using ECMWF variable names and level-type descriptions (see the notes in the _Configuration_ section for links). (Note that some variables do not support a "level" concept.) The full verification task-graph will comprise: cycles x leadtimes x variables x levels.
 
-Accumulated total precipitation is verified against six-hour accumulated truth using FSS at neighborhood widths 3, 5, and 11, plus CSI and HSS, for thresholds of 1, 5, 10, and 25 mm.
+Accumulated total precipitation uses the CF standard name `precipitation_amount` and units
+`kg m-2`, matching the HRRRCast, HRRR, and Stage IV GRIB2 fields used for testing. For liquid
+water, 1 kg m-2 is equivalent to 1 mm. It is verified against six-hour accumulated truth using
+FSS at neighborhood widths 3, 5, and 11, plus CSI and HSS, for thresholds of 1, 5, 10, and
+25 kg m-2.
 
 Finally, because `baseline.name` is set to `truth`, `HRRR` forecasts with validtimes matching those of the `ML` model's forecasts will be verified against `HRRR` analysis, producing MET statistics. If the `plots` task is requested, the `ML` and `HRRR` stats will be plotted together.
 

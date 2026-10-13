@@ -424,7 +424,7 @@ def _grib_index_data_wgrib2(c: Config, outdir: Path, tc: TimeCoords, url: str):
             firstbyte=int(this_record[1]),
             lastbyte=int(next_record[1]) - 1,
         )
-        if truth_var.name == EC.accum_tp and not _matches_accumulation_period(
+        if truth_var.name == EC.tp and not _matches_accumulation_period(
             this_record, timedelta(hours=VARMETA[truth_var.name].truth_leadtime)
         ):
             continue
@@ -799,10 +799,10 @@ def _grid_grib_from_local(
     with _EC_LOCK:
         iid = ec.codes_index_read(str(idxfile))
         # Keep index selection here in-sync with index creation in _grib_index_file_eccodes.
-        ec.codes_index_select_string(iid, "shortName", variables.grib_shortname(var.name))
+        ec.codes_index_select_string(iid, "shortName", var.name)
         ec.codes_index_select_string(iid, "typeOfLevel", var.level_type)
         ec.codes_index_select_long(iid, "level", int(var.level) if var.level else 0)
-        if var.name == EC.accum_tp:
+        if var.name == EC.tp:
             end_step = int(
                 tc.leadtime.total_seconds() / 3600
                 if source is Source.FORECAST
@@ -815,7 +815,7 @@ def _grid_grib_from_local(
                 ec.codes_index_select_long(iid, "startStep", start_step)
             ec.codes_index_select_long(iid, "endStep", end_step)
         gids = []
-        if var.name != EC.accum_tp or start_step is not None:
+        if var.name != EC.tp or start_step is not None:
             while gid := ec.codes_new_from_index(iid):
                 gids.append(gid)
         if gids:

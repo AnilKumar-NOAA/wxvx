@@ -27,7 +27,6 @@ class _EC(_ValsMatchKeys):
     Strings defined by ECMWF / ecCodes.
     """
 
-    accum_tp: str = _
     gh: str = _
     prmsl: str = _
     q: str = _
@@ -35,6 +34,7 @@ class _EC(_ValsMatchKeys):
     sp: str = _
     t2: str = "2t"
     t: str = _
+    tp: str = _
     u10: str = "10u"
     u: str = _
     v10: str = "10v"

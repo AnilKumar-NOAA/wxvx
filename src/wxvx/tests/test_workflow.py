@@ -628,7 +628,7 @@ def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tc, tidy):
     idxfile = c.paths.grids_truth / "hrrr.idx"
     idxfile.write_text(tidy(gribidx))
     c.truth = replace(c.truth, name=S.HRRR)
-    c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.accum_tp}}
+    c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.tp}}
 
     @external
     def mock(*_args, **_kwargs):
@@ -639,8 +639,8 @@ def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tc, tidy):
         node = workflow._grib_index_data_wgrib2(
             c=c, outdir=c.paths.grids_truth, tc=tc, url=c.truth.url
         )
-    assert set(node.ref) == {"accum_tp-surface"}
-    var = node.ref["accum_tp-surface"]
+    assert set(node.ref) == {"tp-surface"}
+    var = node.ref["tp-surface"]
     assert var.firstbyte == 100
     assert var.lastbyte == 199
 
@@ -1115,7 +1115,7 @@ def test_workflow__grid_grib_from_local__precipitation(
         workflow._grid_grib_from_local(
             path=fakefs / "a.grib2",
             idxfile=fakefs / "a.ecidx",
-            var=Var(name=EC.accum_tp, level_type=S.surface),
+            var=Var(name=EC.tp, level_type=S.surface),
             source=source,
             tc=TimeCoords(
                 cycle=datetime(2026, 6, 16, 3, tzinfo=timezone.utc),
@@ -1292,9 +1292,9 @@ def test_workflow__regrid_width(c):
     ("truth_name", "name", "expected_leadtime"),
     [
         (S.GFS, EC.t2, timedelta(0)),
-        (S.GFS, EC.accum_tp, timedelta(hours=6)),
-        (S.HRRR, EC.accum_tp, timedelta(hours=6)),
-        (S.STAGEIV, EC.accum_tp, timedelta(0)),
+        (S.GFS, EC.tp, timedelta(hours=6)),
+        (S.HRRR, EC.tp, timedelta(hours=6)),
+        (S.STAGEIV, EC.tp, timedelta(0)),
     ],
 )
 def test_workflow__truth_timecoords(c, truth_name, name, expected_leadtime, tc):
@@ -1395,7 +1395,7 @@ def test_workflow__stats_widths(c):
         (MET.FSS, 11),
         (MET.PODY, None),
     ]
-    c.variables[NOAA.APCP] = {S.level_type: S.surface, S.name: EC.accum_tp}
+    c.variables[NOAA.APCP] = {S.level_type: S.surface, S.name: EC.tp}
     assert list(workflow._stats_widths(c=c, varname=NOAA.APCP)) == [
         (MET.FSS, 3),
         (MET.FSS, 5),
