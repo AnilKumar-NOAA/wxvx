@@ -480,7 +480,7 @@ def _grid_grib(c: Config, tc: TimeCoords, var: Var, source: Source):
         assert isinstance(url, Path)
         idxfile = _grib_index_file_eccodes(c, url, tc, source)
         yield idxfile
-        _grid_grib_from_local(path, idxfile.ref, var, taskname)
+        _grid_grib_from_local(path, idxfile.ref, var, source=source, tc=tc, taskname=taskname)
     else:
         assert isinstance(url, str)
         idxdata = _grib_index_data_wgrib2(c, outdir, tc, url=f"{url}.idx")
@@ -790,7 +790,9 @@ def _grid_grib_gridsdir_template(c: Config, source: Source) -> tuple[Path, str]:
     return c.paths.grids_truth, c.truth.url
 
 
-def _grid_grib_from_local(path: Path, idxfile: Path, var: Var, taskname: str) -> None:
+def _grid_grib_from_local(
+    path: Path, idxfile: Path, var: Var, *, source: Source, tc: TimeCoords, taskname: str
+) -> None:
     # See https://github.com/dtcenter/METplus/discussions/3252 for background on why it's
     # necessary to extract the grid to a single-message GRIB file instead of pointing MET
     # at the complete local GRIB file.
@@ -801,11 +803,21 @@ def _grid_grib_from_local(path: Path, idxfile: Path, var: Var, taskname: str) ->
         ec.codes_index_select_string(iid, "typeOfLevel", var.level_type)
         ec.codes_index_select_long(iid, "level", int(var.level) if var.level else 0)
         if var.name == EC.accum_tp:
-            ec.codes_index_select_long(iid, "startStep", 0)
-            ec.codes_index_select_long(iid, "endStep", VARMETA[var.name].truth_leadtime)
+            end_step = int(
+                tc.leadtime.total_seconds() / 3600
+                if source is Source.FORECAST
+                else VARMETA[var.name].truth_leadtime
+            )
+            valid_start_steps = (0, end_step) if source is Source.FORECAST else (0,)
+            available_start_steps = ec.codes_index_get_long(iid, "startStep")
+            start_step = next((x for x in valid_start_steps if x in available_start_steps), None)
+            if start_step is not None:
+                ec.codes_index_select_long(iid, "startStep", start_step)
+            ec.codes_index_select_long(iid, "endStep", end_step)
         gids = []
-        while gid := ec.codes_new_from_index(iid):
-            gids.append(gid)
+        if var.name != EC.accum_tp or start_step is not None:
+            while gid := ec.codes_new_from_index(iid):
+                gids.append(gid)
         if gids:
             if len(gids) > 1:
                 msg = "%s: %d GRIB messages matched %s in %s"

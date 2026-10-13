@@ -688,7 +688,12 @@ def test_workflow__grid_grib__local(
         path = Path("/path/to/a.grib2")
         _grib_index_file_eccodes.assert_called_once_with(c, path, tc, source)
         _grid_grib_from_local.assert_called_once_with(
-            gribfile.ref, node_idxdata.ref, var, "%s grid %s" % (pre, gribfile.ref)
+            gribfile.ref,
+            node_idxdata.ref,
+            var,
+            source=source,
+            tc=tc,
+            taskname="%s grid %s" % (pre, gribfile.ref),
         )
 
 
@@ -1060,7 +1065,17 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
     with patch.object(workflow, "ec") as ec:
         ec.codes_index_read.return_value = iid
         ec.codes_new_from_index.side_effect = [*gids, None]
-        workflow._grid_grib_from_local(path=path, idxfile=idxfile, var=var, taskname="foo")
+        workflow._grid_grib_from_local(
+            path=path,
+            idxfile=idxfile,
+            var=var,
+            source=Source.FORECAST,
+            tc=TimeCoords(
+                cycle=datetime(2026, 6, 16, 3, tzinfo=timezone.utc),
+                leadtime=timedelta(hours=6),
+            ),
+            taskname="foo",
+        )
     ec.codes_index_read.assert_called_once_with(str(idxfile))
     string_calls = [x.args for x in ec.codes_index_select_string.call_args_list]
     assert (iid, "shortName", "2t") in string_calls
@@ -1082,17 +1097,37 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
     assert logged("Released index %s" % iid)
 
 
-def test_workflow__grid_grib_from_local__precipitation(fakefs):
+@mark.parametrize(
+    ("source", "available_start_steps", "expected_start_step"),
+    [
+        (Source.FORECAST, (0,), 0),
+        (Source.FORECAST, (6,), 6),
+        (Source.FORECAST, (5,), None),
+        (Source.TRUTH, (0,), 0),
+    ],
+)
+def test_workflow__grid_grib_from_local__precipitation(
+    fakefs, source, available_start_steps, expected_start_step
+):
     with patch.object(workflow, "ec") as ec:
+        ec.codes_index_get_long.return_value = available_start_steps
         ec.codes_new_from_index.return_value = None
         workflow._grid_grib_from_local(
             path=fakefs / "a.grib2",
             idxfile=fakefs / "a.ecidx",
             var=Var(name=EC.accum_tp, level_type=S.surface),
+            source=source,
+            tc=TimeCoords(
+                cycle=datetime(2026, 6, 16, 3, tzinfo=timezone.utc),
+                leadtime=timedelta(hours=6 if source is Source.FORECAST else 0),
+            ),
             taskname="foo",
         )
     ec.codes_index_select_string.assert_any_call(ANY, "shortName", "tp")
-    ec.codes_index_select_long.assert_any_call(ANY, "startStep", 0)
+    start_step_calls = [
+        x.args[2] for x in ec.codes_index_select_long.call_args_list if x.args[1] == "startStep"
+    ]
+    assert start_step_calls == ([] if expected_start_step is None else [expected_start_step])
     ec.codes_index_select_long.assert_any_call(ANY, "endStep", 6)
 
 
