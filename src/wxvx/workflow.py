@@ -11,6 +11,7 @@ from enum import Enum, auto
 from functools import cache
 from itertools import chain, pairwise, product
 from pathlib import Path
+from shlex import quote
 from stat import S_IEXEC
 from textwrap import dedent
 from threading import Lock
@@ -117,10 +118,13 @@ def grids_forecast(c: Config):
 def grids_truth(c: Config):
     yield "Truth grids for %s" % c.truth.name
     if c.truth.type is TruthType.GRID:
-        reqs = [
-            _grid_grib(c, _truth_timecoords(c, tc, var), var, Source.TRUTH)
-            for var, _, tc in _vars_varnames_times(c)
-        ]
+        reqs = []
+        for var, _, tc in _vars_varnames_times(c):
+            truth_tc = _truth_timecoords(c, tc, var)
+            if c.truth.name == S.STAGEIV and var.name == EC.tp:
+                reqs.extend(_stageiv_files(c, truth_tc, var))
+            else:
+                reqs.append(_grid_grib(c, truth_tc, var, Source.TRUTH))
     else:
         reqs = None
     yield reqs
@@ -552,6 +556,34 @@ def _netcdf_from_obs(c: Config, tc: TimeCoords):
 
 
 @task
+def _netcdf_from_stageiv(c: Config, tc: TimeCoords, var: Var):
+    yyyymmdd, hh, leadtime = tcinfo(tc)
+    outdir = c.paths.grids_truth / yyyymmdd / hh / leadtime
+    path = outdir / f"{var}.nc"
+    taskname = "netCDF from Stage IV %s" % path
+    yield taskname
+    yield Asset(path, path.is_file)
+    hourly_files = _stageiv_files(c, tc, var)
+    yield [_timegate(c.timegate, tc.validtime), *hourly_files]
+
+    rundir = c.paths.run / "pcp_combine" / yyyymmdd / hh / leadtime
+    runscript = rundir / f"{var}.sh"
+    with atomic(path) as tmp:
+        inputs = " ".join(quote(str(node.ref.resolve())) for node in hourly_files)
+        content = """
+        export OMP_NUM_THREADS=1
+        exec time pcp_combine -add {inputs} {output} \\
+          -field 'name="APCP"; level="A1";' -name APCP >{log} 2>&1
+        """.format(
+            inputs=inputs,
+            output=quote(str(tmp)),
+            log=quote(f"{path.stem}.log"),
+        )
+        _write_runscript(runscript, content)
+        mpexec(_bash(runscript), rundir, taskname)
+
+
+@task
 def _plot(
     c: Config,
     cycle: datetime,
@@ -624,7 +656,7 @@ def _stats_vs_grid(c: Config, varname: str, tc: TimeCoords, var: Var, prefix: st
     else:
         fcst = _grid_grib(c, tc, var, source)
         datafmt = DataFormat.GRIB
-    obs = _grid_grib(c, _truth_timecoords(c, tc, var), var, Source.TRUTH)
+    obs = _truth_grid(c, _truth_timecoords(c, tc, var), var)
     reqs = [fcst, obs]
     path_config = path.with_suffix(".config")
     polyfile = _maybe_polyfile(c, reqs, path)
@@ -701,6 +733,12 @@ def _truth_timecoords(c: Config, tc: TimeCoords, var: Var) -> TimeCoords:
     return TimeCoords(cycle=tc.validtime - leadtime, leadtime=leadtime)
 
 
+def _truth_grid(c: Config, tc: TimeCoords, var: Var) -> Node:
+    if c.truth.name == S.STAGEIV and var.name == EC.tp:
+        return _netcdf_from_stageiv(c, tc, var)
+    return _grid_grib(c, tc, var, Source.TRUTH)
+
+
 def _stat_ylabel(meta: VarMeta, stat: str) -> str:
     return f"{stat} ({meta.units})" if LINETYPE[stat] == MET.cnt else stat
 
@@ -731,15 +769,20 @@ def _bash(runscript: Path) -> str:
 
 
 def _config_fields(c: Config, varname: str, var: Var, datafmt: DataFormat):
-    level_obs = metlevel(var.level_type, var.level)
+    level_fcst = metlevel(var.level_type, var.level)
     varname_truth = variables.model_class(c.truth.name).varname(var.name)
-    assert datafmt != DataFormat.UNKNOWN
-    level_fcst, name_fcst = (
-        (level_obs, varname_truth) if datafmt == DataFormat.GRIB else ("(0,0,*,*)", varname)
+    level_obs = (
+        "A%d" % VARMETA[var.name].truth_leadtime
+        if c.truth.name == S.STAGEIV and var.name == EC.tp
+        else level_fcst
     )
-    field_fcst = {S.level: [level_fcst], S.name: name_fcst}
+    assert datafmt != DataFormat.UNKNOWN
+    level_fcst_config, name_fcst = (
+        (level_fcst, varname_truth) if datafmt == DataFormat.GRIB else ("(0,0,*,*)", varname)
+    )
+    field_fcst = {S.level: [level_fcst_config], S.name: name_fcst}
     if datafmt != DataFormat.GRIB:
-        field_fcst[MET.set_attr_level] = level_obs
+        field_fcst[MET.set_attr_level] = level_fcst
     field_obs = {S.level: [level_obs], S.name: varname_truth}
     varmeta = _varmeta(c, varname)
     if varmeta.cat_thresh:
@@ -907,6 +950,24 @@ def _regrid_width(c: Config) -> int:
     except KeyError as e:
         msg = "Could not determine 'width' value for regrid method '%s'" % c.regrid.method
         raise WXVXError(msg) from e
+
+
+def _stageiv_file(c: Config, tc: TimeCoords) -> Node:
+    url = render(c.truth.url, tc, context=c.raw)
+    proximity, source = classify_url(url)
+    if proximity is Proximity.LOCAL:
+        assert isinstance(source, Path)
+        return _existing(source)
+    assert isinstance(source, str)
+    yyyymmdd, hh, leadtime = tcinfo(tc)
+    outdir = c.paths.grids_truth / yyyymmdd / hh / leadtime
+    return _local_file_from_http(outdir, source, "Stage IV hourly file", c.timegate, tc.validtime)
+
+
+def _stageiv_files(c: Config, tc: TimeCoords, var: Var) -> list[Node]:
+    hours = VARMETA[var.name].truth_leadtime
+    times = [TimeCoords(tc.validtime - timedelta(hours=x)) for x in reversed(range(hours))]
+    return [_stageiv_file(c, hourly_tc) for hourly_tc in times]
 
 
 def _stat_args(

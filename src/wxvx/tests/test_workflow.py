@@ -162,6 +162,19 @@ def test_workflow_grids_truth(c, ngrids, noop, truth_type):
         assert len(workflow.grids_truth(c=c).ref) == expected
 
 
+def test_workflow_grids_truth__stageiv(c, noop):
+    c.truth = replace(c.truth, name=S.STAGEIV)
+    c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.tp}}
+    raw_files = [noop() for _ in range(6)]
+    with (
+        patch.object(workflow, "_grid_grib") as grid_grib,
+        patch.object(workflow, "_stageiv_files", return_value=raw_files) as stageiv_files,
+    ):
+        workflow.grids_truth(c=c)
+    assert stageiv_files.call_count == 6
+    grid_grib.assert_not_called()
+
+
 def test_workflow_metstats(c):
     #   2 sources (forecast and baseline)
     # x 2 cycles
@@ -850,6 +863,61 @@ def test_workflow__polyfile_from_lat_lon_pairs(fakefs, tidy):
     assert path.read_text().strip() == tidy(expected)
 
 
+@mark.parametrize("remote", [False, True])
+def test_workflow__netcdf_from_stageiv(c, fakefs, remote):
+    tc = TimeCoords(datetime(2026, 6, 16, 9, tzinfo=timezone.utc))
+    var = Var(name=EC.tp, level_type=S.surface)
+    source_dir = fakefs / "stageiv"
+    template = source_dir / "st4_conus.{{ yyyymmdd }}{{ hh }}.01h.grb2"
+    if remote:
+        url = "https://example.com/st4_conus.{{ yyyymmdd }}{{ hh }}.01h.grb2"
+    else:
+        url = str(template)
+        source_dir.mkdir()
+        for hour in range(4, 10):
+            Path(str(template).replace("{{ yyyymmdd }}{{ hh }}", f"20260616{hour:02d}")).touch()
+    c.truth = replace(c.truth, name=S.STAGEIV, url=url)
+    path = c.paths.grids_truth / "20260616" / "09" / "000" / "tp-surface.nc"
+
+    def fetch(_taskname, _url, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+
+    with (
+        patch.object(workflow, "fetch", side_effect=fetch) as fetch_mock,
+        patch.object(workflow, "mpexec", side_effect=lambda *_: Path(f"{path}.tmp").touch()),
+    ):
+        node = workflow._netcdf_from_stageiv(c=c, tc=tc, var=var)
+
+    assert node.ready
+    assert path.is_file()
+    assert fetch_mock.call_count == (6 if remote else 0)
+    runscript = c.paths.run / "pcp_combine" / "20260616" / "09" / "000" / "tp-surface.sh"
+    content = runscript.read_text()
+    assert "pcp_combine -add" in content
+    assert "2026061604" in content
+    assert "2026061609" in content
+    assert "2026061603" not in content
+    assert "2026061610" not in content
+    assert '-field \'name="APCP"; level="A1";\' -name APCP' in content
+
+
+def test_workflow__stageiv_files__crosses_midnight(c, noop):
+    tc = TimeCoords(datetime(2026, 6, 17, 2, tzinfo=timezone.utc))
+    var = Var(name=EC.tp, level_type=S.surface)
+    with patch.object(workflow, "_stageiv_file", side_effect=noop) as stageiv_file:
+        result = workflow._stageiv_files(c, tc, var)
+    assert len(result) == 6
+    assert [x.args[1].validtime.isoformat() for x in stageiv_file.call_args_list] == [
+        "2026-06-16T21:00:00",
+        "2026-06-16T22:00:00",
+        "2026-06-16T23:00:00",
+        "2026-06-17T00:00:00",
+        "2026-06-17T01:00:00",
+        "2026-06-17T02:00:00",
+    ]
+
+
 @mark.parametrize("datafmt", [DataFormat.NETCDF, DataFormat.UNKNOWN])
 @mark.parametrize("mask", [True, False])
 @mark.parametrize("source", [Source.BASELINE, Source.FORECAST])
@@ -962,6 +1030,19 @@ def test_workflow__at_validtime(tc):
 def test_workflow__bash():
     path = Path("/path/to/script")
     assert workflow._bash(runscript=path) == f"/usr/bin/env bash {path}"
+
+
+def test_workflow__config_fields__stageiv(c):
+    c.truth = replace(c.truth, name=S.STAGEIV)
+    c.variables[NOAA.APCP] = {S.level_type: S.surface, S.name: EC.tp}
+    var = Var(name=EC.tp, level_type=S.surface)
+    field_fcst, field_obs = workflow._config_fields(c, NOAA.APCP, var, DataFormat.GRIB)
+    assert field_fcst[S.level] == ["Z000"]
+    assert field_obs == {
+        MET.cat_thresh: [">=1", ">=5", ">=10", ">=25"],
+        S.level: ["A6"],
+        S.name: NOAA.APCP,
+    }
 
 
 def test_workflow__enforce_point_truth_type(c):
@@ -1304,6 +1385,23 @@ def test_workflow__truth_timecoords(c, truth_name, name, expected_leadtime, tc):
     assert result.cycle == tc.validtime - expected_leadtime
     assert result.leadtime == expected_leadtime
     assert result.validtime == tc.validtime
+
+
+@mark.parametrize("truth_name", [S.GFS, S.STAGEIV])
+def test_workflow__truth_grid(c, noop, tc, truth_name):
+    c.truth = replace(c.truth, name=truth_name)
+    var = Var(name=EC.tp, level_type=S.surface)
+    with (
+        patch.object(workflow, "_grid_grib", side_effect=noop) as grid_grib,
+        patch.object(workflow, "_netcdf_from_stageiv", side_effect=noop) as netcdf_from_stageiv,
+    ):
+        workflow._truth_grid(c, tc, var)
+    if truth_name == S.STAGEIV:
+        netcdf_from_stageiv.assert_called_once_with(c, tc, var)
+        grid_grib.assert_not_called()
+    else:
+        grid_grib.assert_called_once_with(c, tc, var, Source.TRUTH)
+        netcdf_from_stageiv.assert_not_called()
 
 
 @mark.parametrize(
