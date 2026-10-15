@@ -53,6 +53,34 @@ TESTDATA = {
         MET.PODY,
         None,
     ),
+    "csi": (
+        NOAA.APCP,
+        None,
+        [
+            pd.DataFrame(
+                {MET.MODEL: "foo", MET.FCST_LEAD: [60000], MET.CSI: [0.5], MET.FCST_THRESH: ">=5"}
+            ),
+            pd.DataFrame(
+                {MET.MODEL: "bar", MET.FCST_LEAD: [60000], MET.CSI: [0.4], MET.FCST_THRESH: ">=10"}
+            ),
+        ],
+        MET.CSI,
+        None,
+    ),
+    "hss": (
+        NOAA.APCP,
+        None,
+        [
+            pd.DataFrame(
+                {MET.MODEL: "foo", MET.FCST_LEAD: [60000], MET.HSS: [0.6], MET.FCST_THRESH: ">=5"}
+            ),
+            pd.DataFrame(
+                {MET.MODEL: "bar", MET.FCST_LEAD: [60000], MET.HSS: [0.3], MET.FCST_THRESH: ">=10"}
+            ),
+        ],
+        MET.HSS,
+        None,
+    ),
     "baz": (
         NOAA.REFC,
         None,
@@ -132,6 +160,19 @@ def test_workflow_grids_truth(c, ngrids, noop, truth_type):
     expected = ngrids if truth_type is TruthType.GRID else 0
     with patch.object(workflow, "_grid_grib", noop):
         assert len(workflow.grids_truth(c=c).ref) == expected
+
+
+def test_workflow_grids_truth__stageiv(c, noop):
+    c.truth = replace(c.truth, name=S.STAGEIV)
+    c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.tp}}
+    raw_files = [noop() for _ in range(6)]
+    with (
+        patch.object(workflow, "_grid_grib") as grid_grib,
+        patch.object(workflow, "_stageiv_files", return_value=raw_files) as stageiv_files,
+    ):
+        workflow.grids_truth(c=c)
+    assert stageiv_files.call_count == 6
+    grid_grib.assert_not_called()
 
 
 def test_workflow_metstats(c):
@@ -502,7 +543,7 @@ def test_workflow__db_file(tmp_path):
     cur = con.execute("pragma table_info(stats)")
     columns = {row[1]: row[2] for row in cur.fetchall()}
     con.close()
-    expected_wxvx = {"cycle", "leadtime", "level", "leveltype", "model", "validtime", "varname"}
+    expected_wxvx = {"cycle", "leadtime", "level", "leveltype", "modelname", "validtime", "varname"}
     expected_met = {"RMSE", "PODY", "FSS", "FCST_LEAD", "TOTAL", "VERSION"}
     assert expected_wxvx | expected_met <= set(columns)
 
@@ -515,8 +556,8 @@ def test_workflow__db_import(c_real_fs):
     txtfile = c.paths.run / "point_stat_foo_060000L_19700101_060000V_cnt.txt"
     txtfile.parent.mkdir(parents=True, exist_ok=True)
     txtfile.write_text(
-        "VERSION MODEL FCST_LEAD LINE_TYPE TOTAL ME RMSE SI_BCL SI_BCL.1\n"
-        "V12.0 ForecastModel 60000 CNT 100 0.5 1.2 0.1 0.1\n"
+        "VERSION MODEL FCST_LEAD LINE_TYPE TOTAL ME RMSE SI_BCL SI_BCU\n"
+        "V12.0 Forecast_Model 60000 CNT 100 0.5 1.2 0.1 0.2\n"
     )
 
     @external
@@ -537,10 +578,13 @@ def test_workflow__db_import(c_real_fs):
     assert row["leadtime"] == "6:00:00"
     assert row["level"] == 2
     assert row["leveltype"] == "heightAboveGround"
-    assert row["model"] == "Forecast Model"
+    assert row["modelname"] == "Forecast Model"
     assert row["varname"] == NOAA.T2M
     assert row["LINE_TYPE"] == "CNT"
+    assert row["MODEL"] == "Forecast_Model"
     assert row["ME"] == 0.5
+    assert row["SI_BCL"] == 0.1
+    assert row["SI_BCU"] == 0.2
     con.close()
 
 
@@ -586,6 +630,40 @@ def test_workflow__grib_index_data_wgrib2(c, tc, tidy):
     }
 
 
+def test_workflow__grib_index_data_wgrib2__accumulation_period(c, tc, tidy):
+    tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
+    cycle = tc.cycle.strftime("%Y%m%d%H")
+    gribidx = f"""
+    1:100:d={cycle}:APCP:surface:0-6 hour acc fcst:
+    2:200:d={cycle}:APCP:surface:5-6 hour acc fcst:
+    3:300:d={cycle}:TMP:surface:6 hour fcst:
+    """
+    idxfile = c.paths.grids_truth / "hrrr.idx"
+    idxfile.write_text(tidy(gribidx))
+    c.truth = replace(c.truth, name=S.HRRR)
+    c.variables = {NOAA.APCP: {S.level_type: S.surface, S.name: EC.tp}}
+
+    @external
+    def mock(*_args, **_kwargs):
+        yield "mock"
+        yield Asset(idxfile, idxfile.exists)
+
+    with patch.object(workflow, "_local_file_from_http", mock):
+        node = workflow._grib_index_data_wgrib2(
+            c=c, outdir=c.paths.grids_truth, tc=tc, url=c.truth.url
+        )
+    assert set(node.ref) == {"tp-surface"}
+    var = node.ref["tp-surface"]
+    assert var.firstbyte == 100
+    assert var.lastbyte == 199
+
+
+def test_workflow__matches_accumulation_period__invalid_record():
+    leadtime = timedelta(hours=6)
+    assert not workflow._matches_accumulation_period([], leadtime)
+    assert not workflow._matches_accumulation_period([""] * 6, leadtime)
+
+
 def test_workflow__grib_index_file_eccodes(c, fakefs, logged, tc):
     grib = fakefs / "foo"
     grib.touch()
@@ -623,7 +701,12 @@ def test_workflow__grid_grib__local(
         path = Path("/path/to/a.grib2")
         _grib_index_file_eccodes.assert_called_once_with(c, path, tc, source)
         _grid_grib_from_local.assert_called_once_with(
-            gribfile.ref, node_idxdata.ref, var, "%s grid %s" % (pre, gribfile.ref)
+            gribfile.ref,
+            node_idxdata.ref,
+            var,
+            source=source,
+            tc=tc,
+            taskname="%s grid %s" % (pre, gribfile.ref),
         )
 
 
@@ -780,6 +863,61 @@ def test_workflow__polyfile_from_lat_lon_pairs(fakefs, tidy):
     assert path.read_text().strip() == tidy(expected)
 
 
+@mark.parametrize("remote", [False, True])
+def test_workflow__netcdf_from_stageiv(c, fakefs, remote):
+    tc = TimeCoords(datetime(2026, 6, 16, 9, tzinfo=timezone.utc))
+    var = Var(name=EC.tp, level_type=S.surface)
+    source_dir = fakefs / "stageiv"
+    template = source_dir / "st4_conus.{{ yyyymmdd }}{{ hh }}.01h.grb2"
+    if remote:
+        url = "https://example.com/st4_conus.{{ yyyymmdd }}{{ hh }}.01h.grb2"
+    else:
+        url = str(template)
+        source_dir.mkdir()
+        for hour in range(4, 10):
+            Path(str(template).replace("{{ yyyymmdd }}{{ hh }}", f"20260616{hour:02d}")).touch()
+    c.truth = replace(c.truth, name=S.STAGEIV, url=url)
+    path = c.paths.grids_truth / "20260616" / "09" / "000" / "tp-surface.nc"
+
+    def fetch(_taskname, _url, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+
+    with (
+        patch.object(workflow, "fetch", side_effect=fetch) as fetch_mock,
+        patch.object(workflow, "mpexec", side_effect=lambda *_: Path(f"{path}.tmp").touch()),
+    ):
+        node = workflow._netcdf_from_stageiv(c=c, tc=tc, var=var)
+
+    assert node.ready
+    assert path.is_file()
+    assert fetch_mock.call_count == (6 if remote else 0)
+    runscript = c.paths.run / "pcp_combine" / "20260616" / "09" / "000" / "tp-surface.sh"
+    content = runscript.read_text()
+    assert "pcp_combine -add" in content
+    assert "2026061604" in content
+    assert "2026061609" in content
+    assert "2026061603" not in content
+    assert "2026061610" not in content
+    assert '-field \'name="APCP"; level="A1";\' -name APCP' in content
+
+
+def test_workflow__stageiv_files__crosses_midnight(c, noop):
+    tc = TimeCoords(datetime(2026, 6, 17, 2, tzinfo=timezone.utc))
+    var = Var(name=EC.tp, level_type=S.surface)
+    with patch.object(workflow, "_stageiv_file", side_effect=noop) as stageiv_file:
+        result = workflow._stageiv_files(c, tc, var)
+    assert len(result) == 6
+    assert [x.args[1].validtime.isoformat() for x in stageiv_file.call_args_list] == [
+        "2026-06-16T21:00:00",
+        "2026-06-16T22:00:00",
+        "2026-06-16T23:00:00",
+        "2026-06-17T00:00:00",
+        "2026-06-17T01:00:00",
+        "2026-06-17T02:00:00",
+    ]
+
+
 @mark.parametrize("datafmt", [DataFormat.NETCDF, DataFormat.UNKNOWN])
 @mark.parametrize("mask", [True, False])
 @mark.parametrize("source", [Source.BASELINE, Source.FORECAST])
@@ -800,7 +938,7 @@ def test_workflow__stats_vs_grid(c, datafmt, fakefs, mask, source, tc, testvars)
     )
     kwargs = dict(c=c, varname=NOAA.T2M, tc=tc, var=testvars[EC.t2], prefix="foo", source=source)
     with patch.object(workflow, "classify_data_format", return_value=datafmt):
-        refs = taskfunc(**kwargs, dry_run=True).ref
+        refs = taskfunc(**kwargs, iotaa=dict(dry_run=True)).ref
         assert S.stat in refs
         assert MET.cnt in refs
         stat = refs[S.stat].path
@@ -841,7 +979,7 @@ def test_workflow__stats_vs_obs(c, datafmt, fakefs, mask, source, tc, testvars):
         c.forecast._mask = None
     kwargs = dict(c=c, varname=NOAA.T2M, tc=tc, var=var, prefix="foo", source=source)
     with patch.object(workflow, "classify_data_format", return_value=datafmt):
-        refs = workflow._stats_vs_obs(**kwargs, dry_run=True).ref
+        refs = workflow._stats_vs_obs(**kwargs, iotaa=dict(dry_run=True)).ref
         assert S.stat in refs
         assert MET.cnt in refs
         stat = refs[S.stat].path
@@ -892,6 +1030,19 @@ def test_workflow__at_validtime(tc):
 def test_workflow__bash():
     path = Path("/path/to/script")
     assert workflow._bash(runscript=path) == f"/usr/bin/env bash {path}"
+
+
+def test_workflow__config_fields__stageiv(c):
+    c.truth = replace(c.truth, name=S.STAGEIV)
+    c.variables[NOAA.APCP] = {S.level_type: S.surface, S.name: EC.tp}
+    var = Var(name=EC.tp, level_type=S.surface)
+    field_fcst, field_obs = workflow._config_fields(c, NOAA.APCP, var, DataFormat.GRIB)
+    assert field_fcst[S.level] == ["Z000"]
+    assert field_obs == {
+        MET.cat_thresh: [">=1", ">=5", ">=10", ">=25"],
+        S.level: ["A6"],
+        S.name: NOAA.APCP,
+    }
 
 
 def test_workflow__enforce_point_truth_type(c):
@@ -995,7 +1146,17 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
     with patch.object(workflow, "ec") as ec:
         ec.codes_index_read.return_value = iid
         ec.codes_new_from_index.side_effect = [*gids, None]
-        workflow._grid_grib_from_local(path=path, idxfile=idxfile, var=var, taskname="foo")
+        workflow._grid_grib_from_local(
+            path=path,
+            idxfile=idxfile,
+            var=var,
+            source=Source.FORECAST,
+            tc=TimeCoords(
+                cycle=datetime(2026, 6, 16, 3, tzinfo=timezone.utc),
+                leadtime=timedelta(hours=6),
+            ),
+            taskname="foo",
+        )
     ec.codes_index_read.assert_called_once_with(str(idxfile))
     string_calls = [x.args for x in ec.codes_index_select_string.call_args_list]
     assert (iid, "shortName", "2t") in string_calls
@@ -1015,6 +1176,40 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
         assert actual.args == (expected,)
     ec.codes_index_release.assert_called_once_with(iid)
     assert logged("Released index %s" % iid)
+
+
+@mark.parametrize(
+    ("source", "available_start_steps", "expected_start_step"),
+    [
+        (Source.FORECAST, (0,), 0),
+        (Source.FORECAST, (6,), 6),
+        (Source.FORECAST, (5,), None),
+        (Source.TRUTH, (0,), 0),
+    ],
+)
+def test_workflow__grid_grib_from_local__precipitation(
+    fakefs, source, available_start_steps, expected_start_step
+):
+    with patch.object(workflow, "ec") as ec:
+        ec.codes_index_get_long.return_value = available_start_steps
+        ec.codes_new_from_index.return_value = None
+        workflow._grid_grib_from_local(
+            path=fakefs / "a.grib2",
+            idxfile=fakefs / "a.ecidx",
+            var=Var(name=EC.tp, level_type=S.surface),
+            source=source,
+            tc=TimeCoords(
+                cycle=datetime(2026, 6, 16, 3, tzinfo=timezone.utc),
+                leadtime=timedelta(hours=6 if source is Source.FORECAST else 0),
+            ),
+            taskname="foo",
+        )
+    ec.codes_index_select_string.assert_any_call(ANY, "shortName", "tp")
+    start_step_calls = [
+        x.args[2] for x in ec.codes_index_select_long.call_args_list if x.args[1] == "startStep"
+    ]
+    assert start_step_calls == ([] if expected_start_step is None else [expected_start_step])
+    ec.codes_index_select_long.assert_any_call(ANY, "endStep", 6)
 
 
 def test_workflow__grid_grib_from_remote(testvars):
@@ -1067,7 +1262,7 @@ def test_workflow__maybe_polyfile__mask_str(c, fakefs):
 
 
 def test_workflow__maybe_polyfile__mask_str_met(c, fs, logged):
-    d = Path(os.environ["MET_DATA"], "poly")
+    d = Path(os.environ["MET_BASE"], "poly")
     fs.add_real_directory(d)
     name = "CONUS.poly"
     c.forecast._mask = name
@@ -1081,8 +1276,18 @@ def test_workflow__maybe_polyfile__mask_str_met(c, fs, logged):
     assert logged("Using MET mask %s" % path)
 
 
+def test_workflow__maybe_polyfile__mask_str_met_base_unset(c, fakefs):
+    name = "CONUS.poly"
+    c.forecast._mask = name
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        raises(WXVXError, match="Mask %s not found, and MET_BASE is not set" % name),
+    ):
+        workflow._maybe_polyfile(c=c, reqs=[], statpath=fakefs / "unused")
+
+
 def test_workflow__maybe_polyfile__mask_str_met_missing(c, fs, logged):
-    d = Path(os.environ["MET_DATA"], "poly")
+    d = Path(os.environ["MET_BASE"], "poly")
     fs.add_real_directory(d)
     name = "MISSING.poly"
     c.forecast._mask = name
@@ -1119,7 +1324,7 @@ def test_workflow__met_mask__no_polyfile():
     assert workflow._met_mask(polyfile=polyfile) == expected
 
 
-@mark.parametrize("dictkey", ["foo", "bar", "baz"])
+@mark.parametrize("dictkey", ["foo", "bar", "csi", "hss", "baz"])
 def test_workflow__prepare_plot_data(dictkey):
     _, _, dfs, stat, width = TESTDATA[dictkey]
     linetype = LINETYPE[stat]
@@ -1131,7 +1336,7 @@ def test_workflow__prepare_plot_data(dictkey):
     assert stat in tdf.columns
     assert MET.FCST_LEAD in tdf.columns
     assert all(tdf[MET.FCST_LEAD] == 6)
-    if stat == MET.PODY:
+    if stat in [MET.CSI, MET.HSS, MET.PODY]:
         assert MET.FCST_THRESH in tdf.columns
         assert MET.LABEL in tdf.columns
     if stat == MET.FSS:
@@ -1162,6 +1367,55 @@ def test_workflow__regrid_width(c):
     with raises(WXVXError) as e:
         workflow._regrid_width(c=c)
     assert str(e.value) == "Could not determine 'width' value for regrid method 'FOO'"
+
+
+@mark.parametrize(
+    ("truth_name", "name", "expected_leadtime"),
+    [
+        (S.GFS, EC.t2, timedelta(0)),
+        (S.GFS, EC.tp, timedelta(hours=6)),
+        (S.HRRR, EC.tp, timedelta(hours=6)),
+        (S.STAGEIV, EC.tp, timedelta(0)),
+    ],
+)
+def test_workflow__truth_timecoords(c, truth_name, name, expected_leadtime, tc):
+    c.truth = replace(c.truth, name=truth_name)
+    tc = TimeCoords(cycle=tc.cycle, leadtime=timedelta(hours=6))
+    result = workflow._truth_timecoords(c, tc, Var(name=name, level_type=S.surface))
+    assert result.cycle == tc.validtime - expected_leadtime
+    assert result.leadtime == expected_leadtime
+    assert result.validtime == tc.validtime
+
+
+@mark.parametrize("truth_name", [S.GFS, S.STAGEIV])
+def test_workflow__truth_grid(c, noop, tc, truth_name):
+    c.truth = replace(c.truth, name=truth_name)
+    var = Var(name=EC.tp, level_type=S.surface)
+    with (
+        patch.object(workflow, "_grid_grib", side_effect=noop) as grid_grib,
+        patch.object(workflow, "_netcdf_from_stageiv", side_effect=noop) as netcdf_from_stageiv,
+    ):
+        workflow._truth_grid(c, tc, var)
+    if truth_name == S.STAGEIV:
+        netcdf_from_stageiv.assert_called_once_with(c, tc, var)
+        grid_grib.assert_not_called()
+    else:
+        grid_grib.assert_called_once_with(c, tc, var, Source.TRUTH)
+        netcdf_from_stageiv.assert_not_called()
+
+
+@mark.parametrize(
+    ("stat", "expected"),
+    [
+        (MET.CSI, "CSI"),
+        (MET.FSS, "FSS"),
+        (MET.HSS, "HSS"),
+        (MET.ME, "ME (m)"),
+        (MET.RMSE, "RMSE (m)"),
+    ],
+)
+def test_workflow__stat_ylabel(stat, expected):
+    assert workflow._stat_ylabel(variables.VARMETA[EC.gh], stat) == expected
 
 
 def test_workflow__stat_args(c, statkit, utc):
@@ -1238,6 +1492,14 @@ def test_workflow__stats_widths(c):
         (MET.FSS, 5),
         (MET.FSS, 11),
         (MET.PODY, None),
+    ]
+    c.variables[NOAA.APCP] = {S.level_type: S.surface, S.name: EC.tp}
+    assert list(workflow._stats_widths(c=c, varname=NOAA.APCP)) == [
+        (MET.FSS, 3),
+        (MET.FSS, 5),
+        (MET.FSS, 11),
+        (MET.CSI, None),
+        (MET.HSS, None),
     ]
     assert list(workflow._stats_widths(c=c, varname=NOAA.SPFH)) == [
         (MET.ME, None),

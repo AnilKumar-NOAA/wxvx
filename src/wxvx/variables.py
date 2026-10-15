@@ -36,6 +36,7 @@ class VarMeta:
     cnt_thresh: list[str] | None = None
     nbrhd_shape: str | None = None
     nbrhd_width: list[int] | None = None
+    truth_leadtime: int = 0
 
     def __post_init__(self):
         assert self.cf_standard_name
@@ -61,6 +62,9 @@ class VarMeta:
                     assert v is None or v in (MET.CIRCLE, MET.SQUARE)
                 case MET.nbrhd_width:
                     assert v is None or (v and all(isinstance(x, int) for x in v))
+                case "truth_leadtime":
+                    assert isinstance(v, int)
+                    assert v >= 0
 
 
 UNKNOWN = "unknown"
@@ -68,6 +72,18 @@ UNKNOWN = "unknown"
 VARMETA = {
     x.name: x
     for x in [  # blocks ordered by description
+        VarMeta(
+            description="Accumulated Total Precipitation",
+            cat_thresh=[">=1", ">=5", ">=10", ">=25"],
+            cf_standard_name="precipitation_amount",
+            level_type=S.surface,
+            met_stats=[MET.FSS, MET.CSI, MET.HSS],
+            name=EC.tp,
+            nbrhd_shape=MET.CIRCLE,
+            nbrhd_width=[3, 5, 11],
+            truth_leadtime=6,
+            units="kg m-2",
+        ),
         VarMeta(
             description="2m Temperature",
             cf_standard_name="air_temperature",
@@ -228,6 +244,7 @@ class GFS(Var):
     @staticmethod
     def varname(name: str) -> str:
         return {
+            EC.tp: NOAA.APCP,
             EC.gh: NOAA.HGT,
             EC.prmsl: NOAA.PRMSL,
             EC.q: NOAA.SPFH,
@@ -245,6 +262,7 @@ class GFS(Var):
     @staticmethod
     def _canonicalize(name: str, level_type: str) -> str:
         return {
+            (NOAA.APCP, S.surface): EC.tp,
             (NOAA.HGT, S.isobaricInhPa): EC.gh,
             (NOAA.PRES, S.surface): EC.sp,
             (NOAA.PRMSL, S.meanSea): EC.prmsl,
@@ -296,6 +314,20 @@ class HRRR(GFS):
             S.proj: "lcc",
         }
     )
+
+
+class STAGEIV(GFS):
+    """
+    NOAA/NCEP Stage IV quantitative precipitation estimates.
+    """
+
+    @staticmethod
+    def varname(name: str) -> str:
+        return NOAA.APCP if name == EC.tp else UNKNOWN
+
+    @staticmethod
+    def _canonicalize(name: str, level_type: str) -> str:
+        return EC.tp if (name, level_type) == (NOAA.APCP, S.surface) else UNKNOWN
 
 
 class PREPBUFR(GFS):
@@ -419,11 +451,14 @@ def model_class(name: str) -> Any:
 
 @cache
 def model_names(current: type = Var) -> set[str]:
-    s = set()
-    for subclass in current.__subclasses__():
-        s.add(subclass.__name__)
-        s |= model_names(subclass)
-    return s
+    def names(cls: type[object]) -> set[str]:
+        s = set()
+        for subclass in cls.__subclasses__():
+            s.add(subclass.__name__)
+            s |= names(subclass)
+        return s
+
+    return names(current)
 
 
 # Private
