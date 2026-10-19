@@ -43,6 +43,7 @@ def test_variables_VarMeta():
         units="dBZ",
     )
     x = variables.VarMeta(**kwargs)
+    assert x.truth_leadtime is None
     for k, v in kwargs.items():
         assert getattr(x, k) == v
     for k, v in kwargs.items():
@@ -55,6 +56,9 @@ def test_variables_VarMeta():
         (MET.nbrhd_shape, "TRIANGLE"),
     ]:
         fails(k, v)
+    for value in (-1, "6"):
+        with raises(AssertionError):
+            variables.VarMeta(**{**kwargs, "truth_leadtime": value})
 
 
 def test_variables_VarMeta__tp():
@@ -138,6 +142,7 @@ def test_variables_HRRR__canonicalize(name, level_type, expected):
     [(EC.tp, NOAA.APCP), (EC.t2, variables.UNKNOWN)],
 )
 def test_variables_STAGEIV_varname(name, expected):
+    # Stage IV provides only the tp variable.
     assert variables.STAGEIV.varname(name=name) == expected
 
 

@@ -36,7 +36,7 @@ class VarMeta:
     cnt_thresh: list[str] | None = None
     nbrhd_shape: str | None = None
     nbrhd_width: list[int] | None = None
-    truth_leadtime: int = 0
+    truth_leadtime: int | None = None
 
     def __post_init__(self):
         assert self.cf_standard_name
@@ -63,8 +63,9 @@ class VarMeta:
                 case MET.nbrhd_width:
                     assert v is None or (v and all(isinstance(x, int) for x in v))
                 case "truth_leadtime":
-                    assert isinstance(v, int)
-                    assert v >= 0
+                    if v is not None:
+                        assert isinstance(v, int)
+                        assert v >= 0
 
 
 UNKNOWN = "unknown"
@@ -244,7 +245,6 @@ class GFS(Var):
     @staticmethod
     def varname(name: str) -> str:
         return {
-            EC.tp: NOAA.APCP,
             EC.gh: NOAA.HGT,
             EC.prmsl: NOAA.PRMSL,
             EC.q: NOAA.SPFH,
@@ -252,6 +252,7 @@ class GFS(Var):
             EC.sp: NOAA.PRES,
             EC.t2: NOAA.TMP,
             EC.t: NOAA.TMP,
+            EC.tp: NOAA.APCP,
             EC.u10: NOAA.UGRD,
             EC.u: NOAA.UGRD,
             EC.v10: NOAA.VGRD,

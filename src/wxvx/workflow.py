@@ -429,7 +429,7 @@ def _grib_index_data_wgrib2(c: Config, outdir: Path, tc: TimeCoords, url: str):
             lastbyte=int(next_record[1]) - 1,
         )
         if truth_var.name == EC.tp and not _matches_accumulation_period(
-            this_record, timedelta(hours=VARMETA[truth_var.name].truth_leadtime)
+            this_record, timedelta(hours=_required_truth_leadtime(truth_var.name))
         ):
             continue
         if truth_var in vxvars:
@@ -728,7 +728,7 @@ def _timegate(timegate: bool, validtime: datetime):
 
 
 def _truth_timecoords(c: Config, tc: TimeCoords, var: Var) -> TimeCoords:
-    hours = 0 if c.truth.name == S.STAGEIV else VARMETA[var.name].truth_leadtime
+    hours = 0 if c.truth.name == S.STAGEIV else VARMETA[var.name].truth_leadtime or 0
     leadtime = timedelta(hours=hours)
     return TimeCoords(cycle=tc.validtime - leadtime, leadtime=leadtime)
 
@@ -772,7 +772,7 @@ def _config_fields(c: Config, varname: str, var: Var, datafmt: DataFormat):
     level_fcst = metlevel(var.level_type, var.level)
     varname_truth = variables.model_class(c.truth.name).varname(var.name)
     level_obs = (
-        "A%d" % VARMETA[var.name].truth_leadtime
+        "A%d" % _required_truth_leadtime(var.name)
         if c.truth.name == S.STAGEIV and var.name == EC.tp
         else level_fcst
     )
@@ -849,7 +849,7 @@ def _grid_grib_from_local(
             end_step = int(
                 tc.leadtime.total_seconds() / 3600
                 if source is Source.FORECAST
-                else VARMETA[var.name].truth_leadtime
+                else _required_truth_leadtime(var.name)
             )
             valid_start_steps = (0, end_step) if source is Source.FORECAST else (0,)
             available_start_steps = ec.codes_index_get_long(iid, "startStep")
@@ -952,6 +952,12 @@ def _regrid_width(c: Config) -> int:
         raise WXVXError(msg) from e
 
 
+def _required_truth_leadtime(name: str) -> int:
+    hours = VARMETA[name].truth_leadtime
+    assert hours is not None
+    return hours
+
+
 def _stageiv_file(c: Config, tc: TimeCoords) -> Node:
     url = render(c.truth.url, tc, context=c.raw)
     proximity, source = classify_url(url)
@@ -965,7 +971,7 @@ def _stageiv_file(c: Config, tc: TimeCoords) -> Node:
 
 
 def _stageiv_files(c: Config, tc: TimeCoords, var: Var) -> list[Node]:
-    hours = VARMETA[var.name].truth_leadtime
+    hours = _required_truth_leadtime(var.name)
     times = [TimeCoords(tc.validtime - timedelta(hours=x)) for x in reversed(range(hours))]
     return [_stageiv_file(c, hourly_tc) for hourly_tc in times]
 
