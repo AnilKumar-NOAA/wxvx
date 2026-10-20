@@ -291,11 +291,7 @@ One of `grid` or `point`.
 
 Specifies the location of truth data. Values may be local-filesystem paths (optionally prefixed with `file://`) or HTTP URLs prefixed with `http://` or `https://` and may contain Jinja2 [expressions](#expressions).
 
-NCEP distributes Stage IV CONUS precipitation in GRIB2 format through
-[NOMADS](https://nomads.ncep.noaa.gov/pub/data/nccf/com/pcpanl/prod/). Configure `truth.url`
-with the hourly Stage IV file template. For each forecast valid time, `wxvx` retrieves the six
-one-hour accumulations ending at that time and runs MET's `pcp_combine` to create the six-hour
-truth accumulation used by `grid_stat`:
+NCEP distributes Stage IV CONUS precipitation in GRIB2 format through [NOMADS](https://nomads.ncep.noaa.gov/pub/data/nccf/com/pcpanl/prod/). Configure `truth.url` with the hourly Stage IV file template. For each forecast valid time, `wxvx` retrieves the six one-hour accumulations ending at that time and runs MET's `pcp_combine` to create the six-hour truth accumulation used by `grid_stat`:
 
 ``` yaml
 truth:
@@ -308,8 +304,7 @@ variables:
     name: tp
 ```
 
-The template may also point to hourly files staged locally. For example, a six-hour verification
-ending at 09Z uses the files ending at 04Z through 09Z:
+The template may also point to hourly files staged locally. For example, a six-hour verification ending at 09Z uses the files ending at 04Z through 09Z:
 
 ``` yaml
 truth:
@@ -322,16 +317,9 @@ variables:
     name: tp
 ```
 
-The file timestamp is interpreted as the ending valid time of each hourly accumulation; forecast
-cycles and leadtimes remain controlled by the caller. `pcp_combine` writes the combined `APCP`
-field at accumulation level `A6`, which `wxvx` selects in the generated `grid_stat` configuration.
-NOMADS retains a limited window of production data, so older verification periods require data
-from an archive or files already staged locally.
+The file timestamp is interpreted as the ending valid time of each hourly accumulation; forecast cycles and leadtimes remain controlled by the caller. `pcp_combine` writes the combined `APCP` field at accumulation level `A006`, which `wxvx` selects in the generated `grid_stat` configuration. NOMADS retains a limited window of production data, so older verification periods require data from an archive or files already staged locally.
 
-The `grids_truth` task stages the raw hourly Stage IV files without running `pcp_combine`. This
-allows data to be downloaded on an internet-connected node before `metstats` is run elsewhere.
-When required, `metstats` runs `pcp_combine` through a separate NetCDF-generation task; files
-already staged by `grids_truth` are reused without downloading them again.
+The `grids_truth` task stages the raw hourly Stage IV files without running `pcp_combine`. This allows data to be downloaded on an internet-connected node before `metstats` is run elsewhere. When required, `metstats` runs `pcp_combine` through a separate NetCDF-generation task; files already staged by `grids_truth` are reused without downloading them again.
 
 ### variables
 

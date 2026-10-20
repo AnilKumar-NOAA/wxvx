@@ -36,7 +36,7 @@ class VarMeta:
     cnt_thresh: list[str] | None = None
     nbrhd_shape: str | None = None
     nbrhd_width: list[int] | None = None
-    truth_leadtime: int | None = None
+    truth_leadtime: int = 0
 
     def __post_init__(self):
         assert self.cf_standard_name
@@ -63,9 +63,8 @@ class VarMeta:
                 case MET.nbrhd_width:
                     assert v is None or (v and all(isinstance(x, int) for x in v))
                 case "truth_leadtime":
-                    if v is not None:
-                        assert isinstance(v, int)
-                        assert v >= 0
+                    assert isinstance(v, int)
+                    assert v >= 0
 
 
 UNKNOWN = "unknown"
@@ -429,7 +428,9 @@ def ds_construct(c: Config, da: xr.DataArray, taskname: str, level: float | None
     )
 
 
-def metlevel(level_type: str, level: float | None) -> str:
+def metlevel(level_type: str, level: float | None, accumulation: int | None = None) -> str:
+    if accumulation is not None:
+        return f"A{accumulation:03d}"
     try:
         prefix = {
             S.atmosphere: "L",

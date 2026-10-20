@@ -43,7 +43,7 @@ def test_variables_VarMeta():
         units="dBZ",
     )
     x = variables.VarMeta(**kwargs)
-    assert x.truth_leadtime is None
+    assert x.truth_leadtime == 0
     for k, v in kwargs.items():
         assert getattr(x, k) == v
     for k, v in kwargs.items():
@@ -281,15 +281,19 @@ def test_variables_ds_construct__lcc(c, check_cf_metadata):
 
 
 @mark.parametrize(
-    (S.level_type, S.level, "expected"),
+    (S.level_type, S.level, "accumulation", "expected"),
     [
-        (S.atmosphere, None, "L000"),
-        (S.heightAboveGround, "2", "Z002"),
-        (S.isobaricInhPa, "900", "P900"),
+        (S.surface, None, 6, "A006"),
+        (S.atmosphere, None, None, "L000"),
+        (S.heightAboveGround, "2", None, "Z002"),
+        (S.isobaricInhPa, "900", None, "P900"),
     ],
 )
-def test_variables_metlevel(level_type, level, expected):
-    assert variables.metlevel(level_type=level_type, level=level) == expected
+def test_variables_metlevel(level_type, level, accumulation, expected):
+    assert (
+        variables.metlevel(level_type=level_type, level=level, accumulation=accumulation)
+        == expected
+    )
 
 
 def test_variables_metlevel__error():

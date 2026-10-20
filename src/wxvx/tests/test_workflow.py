@@ -175,6 +175,19 @@ def test_workflow_grids_truth__stageiv(c, noop):
     grid_grib.assert_not_called()
 
 
+def test_workflow_grids_truth__stageiv_invalid_variable(c, logged):
+    c.truth = replace(c.truth, name=S.STAGEIV)
+    c.variables = {NOAA.T2M: {S.level_type: S.heightAboveGround, S.name: EC.t2}}
+    with (
+        patch.object(workflow, "_grid_grib") as grid_grib,
+        patch.object(workflow, "_stageiv_files") as stageiv_files,
+    ):
+        assert not workflow.grids_truth(c=c).ref
+    assert logged("Stage IV truth does not provide variable 2t")
+    grid_grib.assert_not_called()
+    stageiv_files.assert_not_called()
+
+
 def test_workflow_metstats(c):
     #   2 sources (forecast and baseline)
     # x 2 cycles
@@ -664,6 +677,14 @@ def test_workflow__matches_accumulation_period__invalid_record():
     assert not workflow._matches_accumulation_period([""] * 6, leadtime)
 
 
+@mark.parametrize(
+    ("period", "leadtime"),
+    [("0-6 hour acc fcst", timedelta(hours=6)), ("0-1 day acc fcst", timedelta(days=1))],
+)
+def test_workflow__matches_accumulation_period(period, leadtime):
+    assert workflow._matches_accumulation_period([""] * 5 + [period], leadtime)
+
+
 def test_workflow__grib_index_file_eccodes(c, fakefs, logged, tc):
     grib = fakefs / "foo"
     grib.touch()
@@ -672,6 +693,16 @@ def test_workflow__grib_index_file_eccodes(c, fakefs, logged, tc):
         idxfile = workflow._grib_index_file_eccodes(c=c, grib_path=grib, tc=tc, source=Source.TRUTH)
     assert idxfile.ready
     assert idxfile.ref.is_file()
+    ec.codes_index_new_from_file.assert_called_once_with(
+        str(grib),
+        [
+            f"{S.shortName}:s",
+            f"{S.typeOfLevel}:s",
+            f"{S.level}:l",
+            f"{S.startStep}:l",
+            f"{S.endStep}:l",
+        ],
+    )
     for s in ["Opened %s" % grib, "Wrote %s" % idxfile.ref, "Released index"]:
         assert logged(s)
 
@@ -1040,7 +1071,7 @@ def test_workflow__config_fields__stageiv(c):
     assert field_fcst[S.level] == ["Z000"]
     assert field_obs == {
         MET.cat_thresh: [">=1", ">=5", ">=10", ">=25"],
-        S.level: ["A6"],
+        S.level: ["A006"],
         S.name: NOAA.APCP,
     }
 
@@ -1162,6 +1193,8 @@ def test_workflow__grid_grib_from_local(fakefs, gids, logged, testvars):
     assert (iid, "shortName", "2t") in string_calls
     assert (iid, "typeOfLevel", "heightAboveGround") in string_calls
     assert (iid, "level", 2) in [x.args for x in ec.codes_index_select_long.call_args_list]
+    ec.codes_index_select_long.assert_any_call(iid, S.startStep, 6)
+    ec.codes_index_select_long.assert_any_call(iid, S.endStep, 6)
     if gids:
         ec.codes_write.assert_called_once_with(gids[0], ANY)
         assert logged("Wrote gid %s to %s" % (gids[0], path))
@@ -1206,10 +1239,15 @@ def test_workflow__grid_grib_from_local__precipitation(
         )
     ec.codes_index_select_string.assert_any_call(ANY, "shortName", "tp")
     start_step_calls = [
-        x.args[2] for x in ec.codes_index_select_long.call_args_list if x.args[1] == "startStep"
+        x.args[2] for x in ec.codes_index_select_long.call_args_list if x.args[1] == S.startStep
     ]
-    assert start_step_calls == ([] if expected_start_step is None else [expected_start_step])
-    ec.codes_index_select_long.assert_any_call(ANY, "endStep", 6)
+    selected_start_step = (
+        expected_start_step if expected_start_step is not None else available_start_steps[0]
+    )
+    assert start_step_calls == [selected_start_step]
+    ec.codes_index_select_long.assert_any_call(ANY, S.endStep, 6)
+    if expected_start_step is None:
+        ec.codes_new_from_index.assert_not_called()
 
 
 def test_workflow__grid_grib_from_remote(testvars):

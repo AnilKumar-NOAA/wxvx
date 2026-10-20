@@ -153,6 +153,7 @@ class _S(_ValsMatchKeys):
     coords: str = _
     cycle: str = _
     cycles: str = _
+    endStep: str = _
     env: str = _
     fh: str = _
     firstbyte: str = _
@@ -196,6 +197,7 @@ class _S(_ValsMatchKeys):
     session: str = _
     shortName: str = _
     start: str = _
+    startStep: str = _
     stat: str = _
     stats: str = _
     step: str = _
