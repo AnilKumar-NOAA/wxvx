@@ -36,7 +36,7 @@ class VarMeta:
     cnt_thresh: list[str] | None = None
     nbrhd_shape: str | None = None
     nbrhd_width: list[int] | None = None
-    truth_leadtime: int = 0
+    accumulation_hours: int = 0
 
     def __post_init__(self):
         assert self.cf_standard_name
@@ -62,7 +62,7 @@ class VarMeta:
                     assert v is None or v in (MET.CIRCLE, MET.SQUARE)
                 case MET.nbrhd_width:
                     assert v is None or (v and all(isinstance(x, int) for x in v))
-                case "truth_leadtime":
+                case "accumulation_hours":
                     assert isinstance(v, int)
                     assert v >= 0
 
@@ -81,7 +81,7 @@ VARMETA = {
             name=EC.tp,
             nbrhd_shape=MET.CIRCLE,
             nbrhd_width=[3, 5, 11],
-            truth_leadtime=6,
+            accumulation_hours=6,
             units="kg m-2",
         ),
         VarMeta(

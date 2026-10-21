@@ -43,7 +43,7 @@ def test_variables_VarMeta():
         units="dBZ",
     )
     x = variables.VarMeta(**kwargs)
-    assert x.truth_leadtime == 0
+    assert x.accumulation_hours == 0
     for k, v in kwargs.items():
         assert getattr(x, k) == v
     for k, v in kwargs.items():
@@ -58,12 +58,12 @@ def test_variables_VarMeta():
         fails(k, v)
     for value in (-1, "6"):
         with raises(AssertionError):
-            variables.VarMeta(**{**kwargs, "truth_leadtime": value})
+            variables.VarMeta(**{**kwargs, "accumulation_hours": value})
 
 
 def test_variables_VarMeta__tp():
     meta = variables.VARMETA[EC.tp]
-    assert meta.truth_leadtime == 6
+    assert meta.accumulation_hours == 6
     assert meta.cf_standard_name == "precipitation_amount"
     assert meta.units == "kg m-2"
 

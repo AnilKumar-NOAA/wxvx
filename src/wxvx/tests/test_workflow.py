@@ -1241,13 +1241,13 @@ def test_workflow__grid_grib_from_local__precipitation(
     start_step_calls = [
         x.args[2] for x in ec.codes_index_select_long.call_args_list if x.args[1] == S.startStep
     ]
-    selected_start_step = (
-        expected_start_step if expected_start_step is not None else available_start_steps[0]
-    )
-    assert start_step_calls == [selected_start_step]
-    ec.codes_index_select_long.assert_any_call(ANY, S.endStep, 6)
     if expected_start_step is None:
+        assert not start_step_calls
+        assert not [x for x in ec.codes_index_select_long.call_args_list if x.args[1] == S.endStep]
         ec.codes_new_from_index.assert_not_called()
+    else:
+        assert start_step_calls == [expected_start_step]
+        ec.codes_index_select_long.assert_any_call(ANY, S.endStep, 6)
 
 
 def test_workflow__grid_grib_from_remote(testvars):

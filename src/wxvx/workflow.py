@@ -432,7 +432,7 @@ def _grib_index_data_wgrib2(c: Config, outdir: Path, tc: TimeCoords, url: str):
             lastbyte=int(next_record[1]) - 1,
         )
         if truth_var.name == EC.tp and not _matches_accumulation_period(
-            this_record, timedelta(hours=VARMETA[truth_var.name].truth_leadtime)
+            this_record, timedelta(hours=VARMETA[truth_var.name].accumulation_hours)
         ):
             continue
         if truth_var in vxvars:
@@ -748,17 +748,14 @@ def _config_fields(c: Config, varname: str, var: Var, datafmt: DataFormat):
     level_fcst = metlevel(var.level_type, var.level)
     varname_truth = variables.model_class(c.truth.name).varname(var.name)
     level_obs = (
-        metlevel(var.level_type, var.level, VARMETA[var.name].truth_leadtime)
+        metlevel(var.level_type, var.level, VARMETA[var.name].accumulation_hours)
         if c.truth.name == S.STAGEIV and var.name == EC.tp
         else level_fcst
     )
     assert datafmt != DataFormat.UNKNOWN
-    level_fcst_config, name_fcst = (
-        (level_fcst, varname_truth) if datafmt == DataFormat.GRIB else ("(0,0,*,*)", varname)
-    )
-    field_fcst = {S.level: [level_fcst_config], S.name: name_fcst}
+    field_fcst = {S.level: [level_fcst], S.name: varname_truth}
     if datafmt != DataFormat.GRIB:
-        field_fcst[MET.set_attr_level] = level_fcst
+        field_fcst.update({S.level: ["(0,0,*,*)"], S.name: varname, MET.set_attr_level: level_fcst})
     field_obs = {S.level: [level_obs], S.name: varname_truth}
     varmeta = _varmeta(c, varname)
     if varmeta.cat_thresh:
@@ -821,28 +818,11 @@ def _grid_grib_from_local(
         ec.codes_index_select_string(iid, "shortName", var.name)
         ec.codes_index_select_string(iid, "typeOfLevel", var.level_type)
         ec.codes_index_select_long(iid, "level", int(var.level) if var.level else 0)
-        end_step = int(tc.leadtime.total_seconds() / 3600)
-        selected_start_step = end_step
-        matched_start_step = True
-        if var.name == EC.tp:
-            end_step = int(
-                tc.leadtime.total_seconds() / 3600
-                if source is Source.FORECAST
-                else VARMETA[var.name].truth_leadtime
-            )
-            valid_start_steps = (0, end_step) if source is Source.FORECAST else (0,)
-            available_start_steps = ec.codes_index_get_long(iid, S.startStep)
-            start_step = next((x for x in valid_start_steps if x in available_start_steps), None)
-            matched_start_step = start_step is not None
-            selected_start_step = (
-                start_step
-                if start_step is not None
-                else next(iter(available_start_steps), end_step)
-            )
-        ec.codes_index_select_long(iid, S.startStep, selected_start_step)
-        ec.codes_index_select_long(iid, S.endStep, end_step)
+        start_step, end_step = _start_and_end_steps(iid, source, tc, var)
         gids = []
-        if matched_start_step:
+        if start_step is not None and end_step is not None:
+            ec.codes_index_select_long(iid, S.startStep, start_step)
+            ec.codes_index_select_long(iid, S.endStep, end_step)
             while gid := ec.codes_new_from_index(iid):
                 gids.append(gid)
         if gids:
@@ -960,9 +940,22 @@ def _stageiv_file(c: Config, tc: TimeCoords) -> Node:
 
 
 def _stageiv_files(c: Config, tc: TimeCoords, var: Var) -> list[Node]:
-    hours = VARMETA[var.name].truth_leadtime
+    hours = VARMETA[var.name].accumulation_hours
     times = [TimeCoords(tc.validtime - timedelta(hours=x)) for x in reversed(range(hours))]
     return [_stageiv_file(c, hourly_tc) for hourly_tc in times]
+
+
+def _start_and_end_steps(
+    iid: int, source: Source, tc: TimeCoords, var: Var
+) -> tuple[int | None, int | None]:
+    forecast_hour = int(tc.leadtime.total_seconds() / 3600)
+    if var.name != EC.tp:
+        return forecast_hour, forecast_hour
+    end_step = forecast_hour if source is Source.FORECAST else VARMETA[var.name].accumulation_hours
+    valid_start_steps = (0, end_step) if source is Source.FORECAST else (0,)
+    available_start_steps = ec.codes_index_get_long(iid, S.startStep)
+    start_step = next((x for x in valid_start_steps if x in available_start_steps), None)
+    return (start_step, end_step) if start_step is not None else (None, None)
 
 
 def _stat_args(
@@ -1031,11 +1024,12 @@ def _truth_grid(c: Config, tc: TimeCoords, var: Var) -> Node:
 
 
 def _truth_timecoords(c: Config, tc: TimeCoords, var: Var) -> TimeCoords:
-    # Stage IV files are named for the accumulation's ending valid time. Other truth sources use
-    # the variable's configured leadtime, which is zero except for accumulated precipitation.
-    hours = 0 if c.truth.name == S.STAGEIV else VARMETA[var.name].truth_leadtime
-    leadtime = timedelta(hours=hours)
-    return TimeCoords(cycle=tc.validtime - leadtime, leadtime=leadtime)
+    # Accumulation duration is variable metadata, while the offset used to locate truth data is a
+    # source convention. Stage IV files are named for the ending valid time (zero offset); other
+    # gridded sources represent accumulations as forecast-like fields whose cycles begin them.
+    accumulation = timedelta(hours=VARMETA[var.name].accumulation_hours)
+    source_offset = timedelta() if c.truth.name == S.STAGEIV else accumulation
+    return TimeCoords(cycle=tc.validtime - source_offset, leadtime=source_offset)
 
 
 def _var(c: Config, varname: str, level: float | None) -> Var:
