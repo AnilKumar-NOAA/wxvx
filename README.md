@@ -465,11 +465,7 @@ Variable grids extracted from truth datasets will be written to `/path/to/workdi
 
 Four variables -- accumulated total precipitation, geopotential height, composite reflectivity, and 2-meter temperature, will be verified. The keys under `variables` map the names of the variables as they appear in the forecast dataset to a canonical description of the variable using ECMWF variable names and level-type descriptions (see the notes in the _Configuration_ section for links). (Note that some variables do not support a "level" concept.) The full verification task-graph will comprise: cycles x leadtimes x variables x levels.
 
-Accumulated total precipitation uses the CF standard name `precipitation_amount` and units
-`kg m-2`, matching the HRRRCast, HRRR, and Stage IV GRIB2 fields used for testing. For liquid
-water, 1 kg m-2 is equivalent to 1 mm. It is verified against six-hour accumulated truth using
-FSS at neighborhood widths 3, 5, and 11, plus CSI and HSS, for thresholds of 1, 5, 10, and
-25 kg m-2.
+Accumulated total precipitation uses the CF standard name `precipitation_amount` and units `kg m-2`, matching the HRRRCast, HRRR, and Stage IV GRIB2 fields used for testing. For liquid water, 1 kg m-2 is equivalent to 1 mm. It is verified against six-hour accumulated truth using FSS at neighborhood widths 3, 5, and 11, plus CSI and HSS, for thresholds of 1, 5, 10, and 25 kg m-2.
 
 Finally, because `baseline.name` is set to `truth`, `HRRR` forecasts with validtimes matching those of the `ML` model's forecasts will be verified against `HRRR` analysis, producing MET statistics. If the `plots` task is requested, the `ML` and `HRRR` stats will be plotted together.
 
